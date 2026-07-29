@@ -186,7 +186,9 @@ llama_model_bert::graph::graph(const llama_model & model, const llm_graph_params
                     LLM_FFN_GELU, false,
                     hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
-                    il);
+                    il,
+                    nullptr, nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
             cb(cur, "ffn_moe_out", il);
         } else if (model.arch == LLM_ARCH_BERT || model.arch == LLM_ARCH_NOMIC_BERT_MOE ||
                    model.arch == LLM_ARCH_JINA_BERT_V3) {

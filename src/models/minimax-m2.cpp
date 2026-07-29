@@ -138,7 +138,9 @@ llama_model_minimax_m2::graph::graph(const llama_model & model, const llm_graph_
                 LLM_FFN_SILU, true,
                 hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
-                il);
+                il,
+                nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
         cb(cur, "ffn_moe_out", il);
 
         cur = ggml_add(ctx0, cur, ffn_inp);

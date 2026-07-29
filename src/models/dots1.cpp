@@ -152,7 +152,9 @@ llama_model_dots1::graph::graph(const llama_model & model, const llm_graph_param
                 LLM_FFN_SILU, hparams.expert_weights_norm,
                 hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
-                il);
+                il,
+                nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
             cb(moe_out, "ffn_moe_out", il);
 
             {

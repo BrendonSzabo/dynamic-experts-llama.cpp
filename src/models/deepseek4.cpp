@@ -1164,7 +1164,8 @@ llama_model_deepseek4::graph::graph(const llama_model & model, const llm_graph_p
                 nullptr,
                 nullptr,
                 nullptr,
-                selected_experts);
+                selected_experts,
+                layer.ffn_slot_map);
         cb(moe_out, "ffn_moe_out", il);
 
         ggml_tensor * ffn_shexp = build_ffn(cur,

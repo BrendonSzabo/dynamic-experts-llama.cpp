@@ -232,7 +232,8 @@ ggml_tensor * llama_model_nemotron_h::graph::build_ffn_layer(ggml_tensor * cur, 
                     router_logits, nullptr,
                     model.layers[il].ffn_up_exps_s,
                     nullptr, // no gate
-                    model.layers[il].ffn_down_exps_s);
+                    model.layers[il].ffn_down_exps_s,
+                    nullptr, model.layers[il].ffn_slot_map);
         cb(moe_out, "ffn_moe_out", il);
 
         if (model.layers[il].ffn_latent_up) {

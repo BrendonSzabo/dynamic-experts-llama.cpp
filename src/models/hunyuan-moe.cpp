@@ -155,7 +155,9 @@ llama_model_hunyuan_moe::graph::graph(const llama_model & model, const llm_graph
                 true, // norm_topk_prob
                 hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
-                il);
+                il,
+                nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
         cb(cur_moe, "ffn_moe_out", il);
 
         ggml_tensor * ffn_out = ggml_add(ctx0, cur_moe, cur_mlp);

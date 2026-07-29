@@ -185,7 +185,8 @@ llama_model_hy_v3::graph::graph(const llama_model & model, const llm_graph_param
                     nullptr, model.layers[il].ffn_gate_up_exps,
                     model.layers[il].ffn_up_exps_s,
                     model.layers[il].ffn_gate_exps_s,
-                    model.layers[il].ffn_down_exps_s);
+                    model.layers[il].ffn_down_exps_s,
+                    nullptr, model.layers[il].ffn_slot_map);
             cb(moe_out, "ffn_moe_out", il);
 
             // shared expert (always active, no gate)
@@ -346,7 +347,8 @@ llama_model_hy_v3::graph_mtp::graph_mtp(const llama_model & model, const llm_gra
                 nullptr, layer.ffn_gate_up_exps,
                 layer.ffn_up_exps_s,
                 layer.ffn_gate_exps_s,
-                layer.ffn_down_exps_s);
+                layer.ffn_down_exps_s,
+                nullptr, layer.ffn_slot_map);
         cb(moe_out, "mtp_ffn_moe_out", il);
 
         ggml_tensor * sh_out = build_ffn(cur,

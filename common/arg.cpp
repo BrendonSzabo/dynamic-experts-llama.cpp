@@ -2645,6 +2645,28 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             }
         }
     ).set_env("LLAMA_ARG_N_CPU_MOE"));
+    // dyn-ex: dynamic expert offloading
+    add_opt(common_arg(
+        {"--dyn-ex"}, "FILE",
+        "path to VLLM\\x02 byte-aligned expert weight .bin file (pre-built with convert-gguf-to-expert-binary.py)",
+        [](common_params & params, const std::string & value) {
+            params.dyn_ex_path = value;
+        }
+    ).set_env("LLAMA_ARG_DYN_EX"));
+    add_opt(common_arg(
+        {"--dyn-ex-l1"}, "N",
+        "number of GPU expert slots per layer (power of 2, e.g. 2, 4, 8, 16, 32)",
+        [](common_params & params, int value) {
+            params.dyn_ex_n_slots = value;
+        }
+    ).set_env("LLAMA_ARG_DYN_EX_L1"));
+    add_opt(common_arg(
+        {"--dyn-ex-predictor"}, "FILE",
+        "path to MLP predictor weights",
+        [](common_params & params, const std::string & value) {
+            params.dyn_ex_predictor = value;
+        }
+    ).set_env("LLAMA_ARG_DYN_EX_PREDICTOR"));
     GGML_ASSERT(params.n_gpu_layers < 0); // string_format would need to be extended for a default >= 0
     add_opt(common_arg(
         {"-ngl", "--gpu-layers", "--n-gpu-layers"}, "N",

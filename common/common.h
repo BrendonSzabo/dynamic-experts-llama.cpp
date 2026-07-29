@@ -739,6 +739,11 @@ struct common_params {
     llama_progress_callback load_progress_callback = NULL;
     void *                  load_progress_callback_user_data = NULL;
     bool no_alloc = false; // Don't allocate model buffers
+
+    // dyn-ex: dynamic expert offloading
+    std::string dyn_ex_path;          // --dyn-ex: path to VLLM\x02 .bin file
+    int32_t     dyn_ex_n_slots = 0;   // --dyn-ex-l1: GPU slots per layer (0 = disabled)
+    std::string dyn_ex_predictor;     // --dyn-ex-predictor: path to MLP predictor weights
 };
 
 // call once at the start of a program if it uses libcommon

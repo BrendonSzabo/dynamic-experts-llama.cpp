@@ -522,7 +522,9 @@ llama_model_minimax_m3::graph::graph(const llama_model & model, const llm_graph_
                     LLM_FFN_SWIGLU_OAI_MOE, hparams.expert_weights_norm,
                     hparams.expert_weights_scale,
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
-                    il);
+                    il,
+                    nullptr, nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
             cb(moe_out, "ffn_moe_out", il);
 
             // shared expert (swigluoai)

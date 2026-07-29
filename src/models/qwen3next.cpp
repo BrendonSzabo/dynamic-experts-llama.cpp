@@ -550,7 +550,9 @@ ggml_tensor * llama_model_qwen3next::graph::build_layer_ffn(ggml_tensor * cur, c
                 LLM_FFN_SILU, true,
                 hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il,
-                nullptr, model.layers[il].ffn_gate_up_exps);
+                nullptr, model.layers[il].ffn_gate_up_exps,
+                nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
         cb(moe_out, "ffn_moe_out", il);
 
         // Add shared experts if present - following Qwen3Next reference implementation

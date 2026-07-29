@@ -240,7 +240,9 @@ llama_model_glm4_moe::graph::graph(const llama_model & model, const llm_graph_pa
                     LLM_FFN_SILU, hparams.expert_weights_norm,
                     hparams.expert_weights_scale,
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
-                    il);
+                    il,
+                    nullptr, nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
             cb(routed_out, "ffn_moe_out", il);
 
             // Process shared expert on original input

@@ -228,7 +228,9 @@ llama_model_llama4::graph<iswa>::graph(const llama_model & model, const llm_grap
                     LLM_FFN_SILU, false,
                     hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
-                    il);
+                    il,
+                    nullptr, nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
 
             // Shared experts
             ggml_tensor * shexp_out = build_ffn(ffn_inp_normed,

@@ -158,7 +158,9 @@ llama_model_smallthinker::graph<iswa>::graph(const llama_model & model, const ll
                     LLM_FFN_RELU, true,
                     hparams.expert_weights_scale,
                     static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func),
-                    il, probs);
+                    il, probs,
+                    nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
 
         cb(ffn_out, "ffn_out", il);
         cur = ffn_out;

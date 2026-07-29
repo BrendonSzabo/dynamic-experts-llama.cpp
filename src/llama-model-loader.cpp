@@ -1521,6 +1521,16 @@ bool llama_model_loader::load_all_data(
             continue;
         }
 
+        // dyn-ex: skip expert weight tensors (loaded on demand from .bin via slot cache)
+        {
+            const char * tname = ggml_get_name(cur);
+            if (strstr(tname, "_exps.") || strstr(tname, "_exps_")) {
+                size_t n_size = ggml_nbytes(cur);
+                size_done += n_size; // treat as loaded for accurate progress
+                continue;
+            }
+        }
+
         if (progress_callback) {
             if (!progress_callback((float) size_done / size_data, progress_callback_user_data)) {
                 return false;

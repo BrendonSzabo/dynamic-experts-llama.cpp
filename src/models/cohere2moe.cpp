@@ -241,7 +241,8 @@ llama_model_cohere2moe::graph::graph(const llama_model & model, const llm_graph_
                     nullptr, layer.ffn_gate_up_exps,
                     layer.ffn_up_exps_s,
                     layer.ffn_gate_exps_s,
-                    layer.ffn_down_exps_s);
+                    layer.ffn_down_exps_s,
+                    nullptr, layer.ffn_slot_map);
             cb(cur, "ffn_moe_out", il);
 
             if (layer.ffn_up_shexp) {
@@ -396,7 +397,8 @@ llama_model_cohere2moe::graph_mtp::graph_mtp(const llama_model & model, const ll
             nullptr, layer.ffn_gate_up_exps,
             layer.ffn_up_exps_s,
             layer.ffn_gate_exps_s,
-            layer.ffn_down_exps_s);
+            layer.ffn_down_exps_s,
+            nullptr, layer.ffn_slot_map);
     cb(cur, "mtp_ffn_moe_out", il);
 
     if (layer.ffn_up_shexp) {

@@ -464,7 +464,8 @@ llama_model_deepseek32::graph::graph(const llama_model & model, const llm_graph_
                 model.layers[il].ffn_gate_up_exps,
                 model.layers[il].ffn_up_exps_s,
                 model.layers[il].ffn_gate_exps_s,
-                model.layers[il].ffn_down_exps_s);
+                model.layers[il].ffn_down_exps_s,
+                nullptr, model.layers[il].ffn_slot_map);
             cb(moe_out, "ffn_moe_out", il);
 
             // FFN shared expert

@@ -1,6 +1,7 @@
 #include "llama-model.h"
 
 #include "llama-arch.h"
+#include "llama-dyn-ex.h"
 #include "llama-ext.h"
 #include "llama-hparams.h"
 #include "llama-impl.h"
@@ -1037,6 +1038,17 @@ struct llama_model::impl {
     bool has_tensor_overrides;
 
     std::vector<float> tensor_split_owned;
+
+    // dyn-ex
+    dyn_ex_cache     * dyn_ex      = nullptr;
+    dyn_ex_predictor * dyn_ex_pred = nullptr;
+    std::string        dyn_ex_pred_path;   // path for save/load
+    std::string        dyn_ex_trace_dir;   // trace output directory (empty = no trace)
+
+    // dyn-ex trace capture: per-layer hidden states + expert masks, drained after decode
+    std::vector<std::vector<float>> dyn_traces_ht;
+    std::vector<std::vector<float>> dyn_traces_mask;
+    int dyn_trace_seq_len = 0;  // number of tokens captured since last drain
 };
 
 llama_model::llama_model(const llama_model_params & params) : params(params), pimpl(std::make_unique<impl>()) {
@@ -1052,6 +1064,37 @@ llama_model::llama_model(const llama_model_params & params) : params(params), pi
 llama_model::~llama_model() {
     for (auto * lora : loras) {
         delete lora;
+    }
+    // dyn-ex: free slot cache, predictor, per-layer slot tensors
+    if (pimpl->dyn_ex) {
+        for (auto & layer : layers) {
+            if (layer.ffn_slot_map && layer.ffn_slot_map->buffer == pimpl->dyn_ex->buf_slot_map.get()) {
+                delete layer.ffn_slot_map;
+                layer.ffn_slot_map = nullptr;
+            }
+            if (layer.ffn_gate_up_exps && layer.ffn_gate_up_exps->buffer == pimpl->dyn_ex->buf_gate_up.get()) {
+                delete layer.ffn_gate_up_exps;
+                layer.ffn_gate_up_exps = nullptr;
+            }
+            if (layer.ffn_gate_exps && layer.ffn_gate_exps->buffer == pimpl->dyn_ex->buf_gate.get()) {
+                delete layer.ffn_gate_exps;
+                layer.ffn_gate_exps = nullptr;
+            }
+            if (layer.ffn_up_exps && layer.ffn_up_exps->buffer == pimpl->dyn_ex->buf_up.get()) {
+                delete layer.ffn_up_exps;
+                layer.ffn_up_exps = nullptr;
+            }
+            if (layer.ffn_down_exps && layer.ffn_down_exps->buffer == pimpl->dyn_ex->buf_down.get()) {
+                delete layer.ffn_down_exps;
+                layer.ffn_down_exps = nullptr;
+            }
+        }
+        dyn_ex_cache_free(pimpl->dyn_ex);
+        pimpl->dyn_ex = nullptr;
+    }
+    if (pimpl->dyn_ex_pred) {
+        dyn_ex_predictor_free(pimpl->dyn_ex_pred);
+        pimpl->dyn_ex_pred = nullptr;
     }
 }
 
@@ -1510,6 +1553,132 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                 output_in_s = create_tensor(tn(LLM_TENSOR_OUTPUT, "input_scale"), {1}, TENSOR_NOT_REQUIRED);
             }
         }
+    }
+    // dyn-ex: set up dynamic expert cache and replace layer expert tensors
+    if (hparams.n_expert > 0 && params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]) {
+        LLAMA_LOG_INFO("%s: initializing dynamic experts from %s (n_slots=%d)\n",
+                       __func__, params.dyn_ex_path, params.dyn_ex_n_slots);
+
+        dyn_ex_reader * reader = dyn_ex_reader_open(params.dyn_ex_path);
+        if (!reader) {
+            throw std::runtime_error(format("dyn-ex: failed to open %s", params.dyn_ex_path));
+        }
+
+        // find GPU device for the first expert layer
+        ggml_backend_dev_t gpu_dev = cpu_dev;
+        for (int il = 0; il < n_layer_all; il++) {
+            if (layers[il].ffn_gate_up_exps || layers[il].ffn_gate_exps || layers[il].ffn_down_exps) {
+                gpu_dev = pimpl->dev_layer[il].dev;
+                break;
+            }
+        }
+
+        // grab original expert tensor metadata from first MoE layer
+        ggml_tensor * orig_gate_up = nullptr;
+        ggml_tensor * orig_gate    = nullptr;
+        ggml_tensor * orig_up      = nullptr;
+        ggml_tensor * orig_down    = nullptr;
+        for (int il = 0; il < n_layer_all; il++) {
+            if (layers[il].ffn_gate_up_exps) { orig_gate_up = layers[il].ffn_gate_up_exps; break; }
+            if (layers[il].ffn_gate_exps)    { orig_gate    = layers[il].ffn_gate_exps;    }
+            if (layers[il].ffn_up_exps)      { orig_up      = layers[il].ffn_up_exps;      }
+            if (layers[il].ffn_down_exps)    { orig_down    = layers[il].ffn_down_exps;    break; }
+        }
+
+        pimpl->dyn_ex = dyn_ex_cache_init(
+            reader, params.dyn_ex_n_slots, gpu_dev,
+            orig_gate_up, orig_gate, orig_up, orig_down);
+        if (!pimpl->dyn_ex) {
+            dyn_ex_reader_close(reader);
+            throw std::runtime_error("dyn-ex: cache init failed");
+        }
+
+        int n_slots = params.dyn_ex_n_slots;
+        auto make_slot_tensor = [&](int il, ggml_tensor * orig, ggml_backend_buffer_ptr & slot_buf, size_t expert_size) -> ggml_tensor * {
+            if (!orig || !slot_buf) return nullptr;
+            ggml_type type  = orig->type;
+            int64_t   ne0   = orig->ne[0];
+            int64_t   ne1   = orig->ne[1];
+            size_t slot_stride = ((expert_size + 255) / 256) * 256;
+            size_t offset      = (size_t)il * n_slots * slot_stride;
+
+            ggml_tensor * t = new ggml_tensor();
+            memset(t, 0, sizeof(ggml_tensor));
+            t->type  = type;
+            t->ne[0] = ne0;
+            t->ne[1] = ne1;
+            t->ne[2] = n_slots;
+            t->ne[3] = 1;
+            t->nb[0] = orig->nb[0];
+            t->nb[1] = orig->nb[1];
+            t->nb[2] = orig->nb[1] * ne1;
+            t->nb[3] = t->nb[2] * n_slots;
+
+            ggml_backend_tensor_alloc(slot_buf.get(), t, (char *)ggml_backend_buffer_get_base(slot_buf.get()) + offset);
+            LLAMA_LOG_INFO("dyn-ex: slot_tensor[%d] %s ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu,%zu] offset=%zu bufsize=%zu nbytes=%zu\n",
+                il, ggml_get_name(orig),
+                (long long)t->ne[0], (long long)t->ne[1], (long long)t->ne[2],
+                t->nb[0], t->nb[1], t->nb[2], t->nb[3],
+                offset, ggml_backend_buffer_get_size(slot_buf.get()), ggml_nbytes(t));
+            ggml_format_name(t, "blk.%d.%s_slots", il, ggml_get_name(orig));
+            return t;
+        };
+
+        for (int il = 0; il < n_layer_all; il++) {
+            auto & layer = layers[il];
+
+            bool is_moe = layer.ffn_gate_up_exps || layer.ffn_down_exps;
+            if (!is_moe) continue;
+
+            layer.ffn_slot_map = new ggml_tensor();
+            memset(layer.ffn_slot_map, 0, sizeof(ggml_tensor));
+            layer.ffn_slot_map->type   = GGML_TYPE_I32;
+            layer.ffn_slot_map->ne[0]  = hparams.n_expert;
+            layer.ffn_slot_map->ne[1]  = 1;
+            layer.ffn_slot_map->ne[2]  = 1;
+            layer.ffn_slot_map->ne[3]  = 1;
+            layer.ffn_slot_map->nb[0]  = sizeof(int32_t);
+            layer.ffn_slot_map->nb[1]  = (size_t)sizeof(int32_t) * hparams.n_expert;
+            layer.ffn_slot_map->nb[2]  = layer.ffn_slot_map->nb[1];
+            layer.ffn_slot_map->nb[3]  = layer.ffn_slot_map->nb[2];
+            size_t sm_offset = (size_t)il * hparams.n_expert * sizeof(int32_t);
+            ggml_backend_tensor_alloc(pimpl->dyn_ex->buf_slot_map.get(), layer.ffn_slot_map,
+                (char *)ggml_backend_buffer_get_base(pimpl->dyn_ex->buf_slot_map.get()) + sm_offset);
+
+            layer.ffn_gate_up_exps = make_slot_tensor(il, layer.ffn_gate_up_exps,
+                pimpl->dyn_ex->buf_gate_up, pimpl->dyn_ex->gate_up_expert_size);
+            layer.ffn_gate_exps = make_slot_tensor(il, layer.ffn_gate_exps,
+                pimpl->dyn_ex->buf_gate, pimpl->dyn_ex->gate_expert_size);
+            layer.ffn_up_exps = make_slot_tensor(il, layer.ffn_up_exps,
+                pimpl->dyn_ex->buf_up, pimpl->dyn_ex->up_expert_size);
+            layer.ffn_down_exps = make_slot_tensor(il, layer.ffn_down_exps,
+                pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
+
+            pimpl->dyn_ex->t_gate_up[il] = layer.ffn_gate_up_exps;
+            pimpl->dyn_ex->t_gate[il]    = layer.ffn_gate_exps;
+            pimpl->dyn_ex->t_up[il]      = layer.ffn_up_exps;
+            pimpl->dyn_ex->t_down[il]    = layer.ffn_down_exps;
+        }
+
+        dyn_ex_cache_fill(pimpl->dyn_ex);
+
+        // load predictor if specified
+        if (params.dyn_ex_predictor && params.dyn_ex_predictor[0]) {
+            int D = hparams.n_embd;
+            int L = n_layer_all;
+            int E = hparams.n_expert;
+            int H = 16;
+            pimpl->dyn_ex_pred = dyn_ex_predictor_load(params.dyn_ex_predictor, D, L, E, H);
+            if (pimpl->dyn_ex_pred) {
+                pimpl->dyn_ex_pred_path = params.dyn_ex_predictor;
+            }
+        }
+
+        // init trace buffers (one per MoE layer, always allocated when dyn-ex active)
+        pimpl->dyn_traces_ht.resize(n_layer_all);
+        pimpl->dyn_traces_mask.resize(n_layer_all);
+
+        LLAMA_LOG_INFO("%s: dynamic experts initialized\n", __func__);
     }
     ml.done_getting_tensors();
 
@@ -2388,6 +2557,9 @@ llama_model_params llama_model_default_params() {
         /*.use_extra_bufts             =*/ true,
         /*.no_host                     =*/ false,
         /*.no_alloc                    =*/ false,
+        /*.dyn_ex_path                 =*/ nullptr,
+        /*.dyn_ex_n_slots              =*/ 0,
+        /*.dyn_ex_predictor            =*/ nullptr,
     };
 
     return result;
@@ -2839,4 +3011,195 @@ const int32_t * llama_model_target_layer_ids(const struct llama_model * model) {
 
 uint32_t llama_model_target_layer_ids_n(const struct llama_model * model) {
     return (uint32_t) model->target_layer_ids.size();
+}
+
+// dyn-ex orchestration
+
+bool llama_model::has_dyn_ex() const {
+    return pimpl->dyn_ex != nullptr;
+}
+
+void llama_model::dyn_ex_predict_and_prefetch(int layer,
+    const float * ht, const float * mask, int n_tokens) const {
+    if (!pimpl->dyn_ex || !pimpl->dyn_ex_pred) return;
+    auto & de = pimpl;
+
+    int top_k = std::min(de->dyn_ex->n_slots, de->dyn_ex->n_experts);
+    std::vector<int>   top_ids(n_tokens * top_k);
+    std::vector<float> scores(n_tokens * de->dyn_ex->n_experts);
+
+    dyn_ex_predictor_predict(de->dyn_ex_pred, n_tokens, ht, mask, layer, top_k,
+                             top_ids.data(), scores.data());
+
+    dyn_ex_cache_prefetch(de->dyn_ex, layer, top_ids.data(), top_k, scores.data());
+}
+
+void llama_model::dyn_ex_capture_trace(int layer,
+    const float * ht, const float * mask, int n_tokens) {
+    if (!pimpl->dyn_ex) return;
+    auto & de = pimpl;
+    if (layer < 0 || layer >= (int)de->dyn_traces_ht.size()) return;
+
+    int D = hparams.n_embd;
+    int E = hparams.n_expert;
+
+    auto & ht_buf   = de->dyn_traces_ht[layer];
+    auto & mask_buf = de->dyn_traces_mask[layer];
+
+    size_t old_sz = ht_buf.size();
+    ht_buf.resize(old_sz + (size_t)n_tokens * D);
+    memcpy(ht_buf.data() + old_sz, ht, n_tokens * D * sizeof(float));
+
+    mask_buf.resize(old_sz / D * E + (size_t)n_tokens * E);
+    memcpy(mask_buf.data() + old_sz / D * E, mask, n_tokens * E * sizeof(float));
+}
+
+float llama_model::dyn_ex_train() {
+    if (!pimpl->dyn_ex_pred) return 0.0f;
+    auto & de = pimpl;
+    auto & p  = *de->dyn_ex_pred;
+
+    int D = p.D, L = p.L, E = p.E, H = p.H;
+    int HpE = H + E;
+
+    const float lr = 5e-4f;
+    (void)lr;
+
+    float total_loss = 0.0f;
+    int   n_steps    = 0;
+
+    for (int l = 0; l < L; l++) {
+        auto & ht_buf   = de->dyn_traces_ht[l];
+        auto & mask_buf = de->dyn_traces_mask[l];
+        if (ht_buf.empty()) continue;
+
+        int n_tokens = (int)ht_buf.size() / D;
+
+        for (int t = 0; t < n_tokens; t++) {
+            const float * ht_t   = ht_buf.data() + (size_t)t * D;
+            const float * mask_t = mask_buf.data() + (size_t)t * E;
+
+            // ── forward pass ──
+            std::vector<float> z(H), x(HpE), h_buf(H), logits(E);
+            std::vector<float> z_mask(H);  // ReLU gradient mask for z
+
+            // trunk: z = ReLU(ht @ trunk_w^T + trunk_b)
+            for (int j = 0; j < H; j++) {
+                float sum = p.trunk_b[j];
+                for (int i = 0; i < D; i++) sum += ht_t[i] * p.trunk_w[j * D + i];
+                z[j] = sum;
+                z_mask[j] = sum > 0.0f ? 1.0f : 0.0f;
+                z[j] = z_mask[j] ? sum : 0.0f;
+            }
+            // x = cat(z, Et)
+            memcpy(x.data(), z.data(), H * sizeof(float));
+            memcpy(x.data() + H, mask_t, E * sizeof(float));
+
+            // W1: h = ReLU(x @ W1_l^T + b1_l)
+            const float * W1_l = p.W1.data() + (size_t)l * H * HpE;
+            const float * b1_l = p.b1.data() + (size_t)l * H;
+            std::vector<float> h_pre(H);
+            std::vector<float> h_mask(H);
+            for (int j = 0; j < H; j++) {
+                float sum = b1_l[j];
+                for (int i = 0; i < HpE; i++) sum += x[i] * W1_l[j * HpE + i];
+                h_pre[j] = sum;
+                h_mask[j] = sum > 0.0f ? 1.0f : 0.0f;
+                h_buf[j] = h_mask[j] ? sum : 0.0f;
+            }
+
+            // W2: logits = h @ W2_l^T + b2_l
+            const float * W2_l = p.W2.data() + (size_t)l * E * H;
+            const float * b2_l = p.b2.data() + (size_t)l * E;
+            for (int j = 0; j < E; j++) {
+                float sum = b2_l[j];
+                for (int i = 0; i < H; i++) sum += h_buf[i] * W2_l[j * H + i];
+                logits[j] = sum;
+            }
+
+            // ── loss ──
+            float loss = 0.0f;
+            std::vector<float> dlogits(E);
+            for (int e = 0; e < E; e++) {
+                float pred = 1.0f / (1.0f + expf(-logits[e]));
+                float y    = mask_t[e];
+                float lp   = logf(fmaxf(pred, 1e-7f));
+                float ln   = logf(fmaxf(1.0f - pred, 1e-7f));
+                loss -= y * lp + (1.0f - y) * ln;
+                dlogits[e] = pred - y;
+            }
+            total_loss += loss / E;
+            n_steps++;
+            p.step++;
+
+            // ── backward pass ──
+            // dW2, db2
+            for (int j = 0; j < E; j++) {
+                float d = dlogits[j];
+                for (int i = 0; i < H; i++) {
+                    p.W2[(size_t)l * E * H + j * H + i] -= lr * d * h_buf[i]; // SGD fallback initially
+                }
+            }
+            // dW1, db1
+            std::vector<float> dh(H, 0.0f);
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < E; j++) {
+                    dh[i] += dlogits[j] * W2_l[j * H + i];
+                }
+                dh[i] *= h_mask[i];
+            }
+            for (int j = 0; j < H; j++) {
+                for (int i = 0; i < HpE; i++) {
+                    p.W1[(size_t)l * H * HpE + j * HpE + i] -= lr * dh[j] * x[i];
+                }
+            }
+            // dtrunk
+            std::vector<float> dz(H, 0.0f);
+            for (int i = 0; i < H; i++) {
+                for (int j = 0; j < H; j++) {
+                    dz[i] += dh[j] * W1_l[j * HpE + i];
+                }
+                dz[i] *= z_mask[i];
+            }
+            for (int j = 0; j < H; j++) {
+                for (int i = 0; i < D; i++) {
+                    p.trunk_w[j * D + i] -= lr * dz[j] * ht_t[i];
+                }
+                p.trunk_b[j] -= lr * dz[j];
+            }
+            // b1
+            for (int j = 0; j < H; j++) p.b1[(size_t)l * H + j] -= lr * dh[j];
+            // b2
+            for (int j = 0; j < E; j++) p.b2[(size_t)l * E + j] -= lr * dlogits[j];
+        }
+    }
+
+    // drain traces
+    for (int l = 0; l < L; l++) {
+        de->dyn_traces_ht[l].clear();
+        de->dyn_traces_mask[l].clear();
+    }
+    de->dyn_trace_seq_len = 0;
+
+    return n_steps > 0 ? total_loss / n_steps : 0.0f;
+}
+
+void llama_model::dyn_ex_save_predictor(const char * path) const {
+    if (!pimpl->dyn_ex_pred || !path) return;
+    auto & p = *pimpl->dyn_ex_pred;
+
+    FILE * f = fopen(path, "wb");
+    if (!f) return;
+
+    const char magic[4] = {'D','X','P','2'};
+    fwrite(magic, 1, 4, f);
+    int32_t hdr[4] = {p.D, p.L, p.E, p.H};
+    fwrite(hdr, sizeof(hdr), 1, f);
+    fwrite(p.trunk_w.data(), sizeof(float), p.trunk_w.size(), f);
+    fwrite(p.trunk_b.data(), sizeof(float), p.trunk_b.size(), f);
+    fwrite(p.W1.data(),      sizeof(float), p.W1.size(),      f);
+    fwrite(p.b1.data(),      sizeof(float), p.b1.size(),      f);
+    fwrite(p.W2.data(),      sizeof(float), p.W2.size(),      f);
+    fwrite(p.b2.data(),      sizeof(float), p.b2.size(),      f);
+    fclose(f);
 }

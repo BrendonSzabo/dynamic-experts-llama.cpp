@@ -316,6 +316,9 @@ struct llama_layer {
     struct ggml_tensor * ffn_down_exps_s   = nullptr;
     struct ggml_tensor * ffn_up_exps_s     = nullptr;
 
+    // dyn-ex: per-layer expert→slot mapping (int32, n_expert elements, on GPU)
+    struct ggml_tensor * ffn_slot_map      = nullptr;
+
     // ff MoE latent proj
     struct ggml_tensor * ffn_latent_down = nullptr;
     struct ggml_tensor * ffn_latent_up   = nullptr;
@@ -690,6 +693,13 @@ struct llama_model {
     virtual void load_hparams(llama_model_loader & ml) = 0;
     virtual void load_vocab  (llama_model_loader & ml) = 0;
     virtual bool load_tensors(llama_model_loader & ml) = 0; // returns false if cancelled by progress_callback
+
+    // dyn-ex orchestration
+    bool has_dyn_ex() const;
+    void dyn_ex_predict_and_prefetch(int layer, const float * ht, const float * mask, int n_tokens) const;
+    void dyn_ex_capture_trace(int layer, const float * ht, const float * mask, int n_tokens);
+    float dyn_ex_train();
+    void dyn_ex_save_predictor(const char * path) const;
 
     // model must define these
     virtual void load_arch_hparams(llama_model_loader & ml) = 0;

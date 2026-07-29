@@ -224,7 +224,9 @@ llama_model_afmoe::graph::graph(const llama_model & model, const llm_graph_param
                     hparams.expert_weights_norm,           // norm_w (route_norm=True)
                     hparams.expert_weights_scale,          // w_scale (route_scale=2.826)
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
-                    il);
+                    il,
+                    nullptr, nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
             cb(moe_out, "ffn_moe_out", il);
 
             // shared expert

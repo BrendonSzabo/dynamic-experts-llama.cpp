@@ -145,7 +145,9 @@ llama_model_grovemoe::graph::graph(const llama_model & model, const llm_graph_pa
                 hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                 il,
-                probs);
+                probs,
+                nullptr, nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
         cb(moe_out, "ffn_moe_out", il);
         cur = moe_out;
 
@@ -161,7 +163,9 @@ llama_model_grovemoe::graph::graph(const llama_model & model, const llm_graph_pa
                     hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il,
-                    probs);
+                    probs,
+                    nullptr, nullptr, nullptr, nullptr,
+                    nullptr, model.layers[il].ffn_slot_map);
         cb(moe_out, "ffn_adj_moe_out", il);
 
         cur = ggml_add(ctx0, cur, ggml_scale(ctx0, moe_out, hparams.expert_group_scale));

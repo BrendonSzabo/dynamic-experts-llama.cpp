@@ -1606,6 +1606,10 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     mparams.progress_callback           = params.load_progress_callback;
     mparams.progress_callback_user_data = params.load_progress_callback_user_data;
     mparams.no_alloc                    = params.no_alloc;
+    // dyn-ex
+    mparams.dyn_ex_path                = params.dyn_ex_path.empty() ? nullptr : params.dyn_ex_path.c_str();
+    mparams.dyn_ex_n_slots             = params.dyn_ex_n_slots;
+    mparams.dyn_ex_predictor           = params.dyn_ex_predictor.empty() ? nullptr : params.dyn_ex_predictor.c_str();
 
     return mparams;
 }

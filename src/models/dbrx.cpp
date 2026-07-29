@@ -122,7 +122,9 @@ llama_model_dbrx::graph::graph(const llama_model & model, const llm_graph_params
                 LLM_FFN_SILU, true,
                 hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
-                il);
+                il,
+                nullptr, nullptr, nullptr, nullptr, nullptr,
+                nullptr, model.layers[il].ffn_slot_map);
         cb(cur, "ffn_moe_out", il);
 
         cur = ggml_add(ctx0, cur, ffn_inp);
