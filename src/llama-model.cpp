@@ -1615,11 +1615,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             t->nb[3] = t->nb[2] * n_slots;
 
             ggml_backend_tensor_alloc(slot_buf.get(), t, (char *)ggml_backend_buffer_get_base(slot_buf.get()) + offset);
-            LLAMA_LOG_INFO("dyn-ex: slot_tensor[%d] %s ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu,%zu] offset=%zu bufsize=%zu nbytes=%zu\n",
-                il, ggml_get_name(orig),
-                (long long)t->ne[0], (long long)t->ne[1], (long long)t->ne[2],
-                t->nb[0], t->nb[1], t->nb[2], t->nb[3],
-                offset, ggml_backend_buffer_get_size(slot_buf.get()), ggml_nbytes(t));
             ggml_format_name(t, "blk.%d.%s_slots", il, ggml_get_name(orig));
             return t;
         };
@@ -1633,13 +1628,13 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_slot_map = new ggml_tensor();
             memset(layer.ffn_slot_map, 0, sizeof(ggml_tensor));
             layer.ffn_slot_map->type   = GGML_TYPE_I32;
-            layer.ffn_slot_map->ne[0]  = hparams.n_expert;
-            layer.ffn_slot_map->ne[1]  = 1;
+            layer.ffn_slot_map->ne[0]  = 1;
+            layer.ffn_slot_map->ne[1]  = hparams.n_expert;
             layer.ffn_slot_map->ne[2]  = 1;
             layer.ffn_slot_map->ne[3]  = 1;
             layer.ffn_slot_map->nb[0]  = sizeof(int32_t);
-            layer.ffn_slot_map->nb[1]  = (size_t)sizeof(int32_t) * hparams.n_expert;
-            layer.ffn_slot_map->nb[2]  = layer.ffn_slot_map->nb[1];
+            layer.ffn_slot_map->nb[1]  = sizeof(int32_t);
+            layer.ffn_slot_map->nb[2]  = (size_t)sizeof(int32_t) * hparams.n_expert;
             layer.ffn_slot_map->nb[3]  = layer.ffn_slot_map->nb[2];
             size_t sm_offset = (size_t)il * hparams.n_expert * sizeof(int32_t);
             ggml_backend_tensor_alloc(pimpl->dyn_ex->buf_slot_map.get(), layer.ffn_slot_map,
@@ -3017,6 +3012,25 @@ uint32_t llama_model_target_layer_ids_n(const struct llama_model * model) {
 
 bool llama_model::has_dyn_ex() const {
     return pimpl->dyn_ex != nullptr;
+}
+
+void llama_model::dyn_ex_ensure_all() const {
+    if (!pimpl->dyn_ex) return;
+    auto * de = pimpl->dyn_ex;
+    std::vector<int> all(de->n_experts);
+    for (int e = 0; e < de->n_experts; e++) all[e] = e;
+    for (int il = 0; il < de->n_layers; il++) {
+        dyn_ex_cache_ensure(de, il, all.data(), de->n_experts);
+    }
+}
+
+void llama_model::dyn_ex_ensure_layer(int layer, const int * expert_ids, int n_ids) const {
+    if (!pimpl->dyn_ex) return;
+    dyn_ex_cache_ensure(pimpl->dyn_ex, layer, expert_ids, n_ids);
+}
+
+dyn_ex_cache * llama_model::dyn_ex_get_cache() const {
+    return pimpl->dyn_ex;
 }
 
 void llama_model::dyn_ex_predict_and_prefetch(int layer,

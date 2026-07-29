@@ -1931,16 +1931,15 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
     cb(selected_experts, "ffn_moe_topk", il);
 
-    // dyn-ex: remap true expert IDs to slot indices via slot_map
-    // selected_experts_slots is used for ggml_mul_mat_id dispatch;
-    // selected_experts (original) is kept for weight/probs extraction
+    // dyn-ex: skip remap for now (debug)
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr) {
-        ggml_tensor * sm_2d = ggml_reshape_2d(ctx0, slot_map, 1, n_expert);
-        selected_experts_slots       = ggml_get_rows(ctx0, sm_2d, selected_experts);
-        selected_experts_slots       = ggml_reshape_3d(ctx0, selected_experts_slots, 1, n_expert_used, n_tokens);
-        cb(selected_experts_slots, "ffn_moe_slots", il);
-    }
+    // if (slot_map != nullptr) {
+    //     ggml_tensor * se_cont = ggml_cont(ctx0, selected_experts);
+    //     ggml_tensor * flat_ids = ggml_reshape_3d(ctx0, se_cont, n_expert_used * n_tokens, 1, 1);
+    //     selected_experts_slots       = ggml_get_rows(ctx0, slot_map, flat_ids);
+    //     selected_experts_slots       = ggml_reshape_2d(ctx0, selected_experts_slots, n_expert_used, n_tokens);
+    //     cb(selected_experts_slots, "ffn_moe_slots", il);
+    // }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
         // TODO: Use scalar div instead when/if implemented

@@ -105,6 +105,11 @@ struct dyn_ex_cache {
     std::vector<ggml_tensor *> t_gate;    // [n_layers], per-layer slot tensors for gate (separate)
     std::vector<ggml_tensor *> t_up;      // [n_layers], per-layer slot tensors for up (separate)
     std::vector<ggml_tensor *> t_down;    // [n_layers], per-layer slot tensors for down
+
+    // per-layer selected_experts capture buffers (GPU→CPU readback after graph compute)
+    std::vector<ggml_backend_buffer_ptr> buf_se_capture; // [n_layers]
+    std::vector<ggml_tensor *>           t_se_capture;   // [n_layers] I32, [n_expert_used, n_tokens]
+
     size_t gate_up_stride = 0; // bytes per slot in gate_up buffer (aligned)
     size_t gate_stride    = 0; // bytes per slot in gate buffer (separate, aligned)
     size_t up_stride      = 0; // bytes per slot in up buffer (separate, aligned)

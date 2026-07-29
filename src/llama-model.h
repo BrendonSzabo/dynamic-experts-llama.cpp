@@ -696,6 +696,9 @@ struct llama_model {
 
     // dyn-ex orchestration
     bool has_dyn_ex() const;
+    void dyn_ex_ensure_all() const;
+    void dyn_ex_ensure_layer(int layer, const int * expert_ids, int n_ids) const;
+    struct dyn_ex_cache * dyn_ex_get_cache() const;
     void dyn_ex_predict_and_prefetch(int layer, const float * ht, const float * mask, int n_tokens) const;
     void dyn_ex_capture_trace(int layer, const float * ht, const float * mask, int n_tokens);
     float dyn_ex_train();

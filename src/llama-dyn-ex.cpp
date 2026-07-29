@@ -203,7 +203,8 @@ size_t dyn_ex_param_size(const dyn_ex_reader * r, int param_idx) {
     for (int d = 0; d < r->params[param_idx].ndim; d++) {
         numel *= r->params[param_idx].shape[d];
     }
-    return (size_t)numel * dyn_ex_ggml_type_size(r->params[param_idx].type);
+    ggml_type type = r->params[param_idx].type;
+    return (size_t)numel * ggml_type_size(type) / ggml_blck_size(type);
 }
 
 int dyn_ex_param_index(const dyn_ex_reader * r, const char * name) {
@@ -307,7 +308,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     if (!cache->buf_slot_map) { dyn_ex_cache_free(cache); return nullptr; }
     // GPU buffer base is a device pointer — must use tensor_set, not memset
     {
-        std::vector<uint8_t> init_buf(slot_map_bytes, 0xFF);
+        std::vector<uint8_t> init_buf(slot_map_bytes, 0);
         raw_buf_write(cache->buf_slot_map.get(), 0, init_buf.data(), slot_map_bytes);
     }
 
@@ -430,9 +431,8 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
             // all slots in use: evict current next_slot
             slot = next_slot;
             int victim = cache->h_expert_in[layer_off_slot + slot];
-            if (victim != DYN_EX_SENTINEL) {
-                cache->h_slot_of[layer_off_expert + victim] = DYN_EX_SENTINEL;
-            }
+            // keep old slot_map entry pointing to this slot (stale but valid index)
+            // predictor will prefetch to fix staleness; DYN_EX_SENTINEL would crash ggml_mul_mat_id
         }
         next_slot = (slot + 1) % n_slots;
 
@@ -501,9 +501,7 @@ void dyn_ex_cache_fill(dyn_ex_cache * cache) {
     if (!cache) return;
     std::vector<int> ids(cache->n_slots);
     for (int l = 0; l < cache->n_layers; l++) {
-        for (int s = 0; s < cache->n_slots; s++) {
-            ids[s] = s;
-        }
+        for (int s = 0; s < cache->n_slots; s++) ids[s] = s;
         dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_slots);
     }
     LLAMA_LOG_INFO("dyn-ex: filled %d layers with %d experts each\n",
