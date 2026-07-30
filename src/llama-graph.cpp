@@ -1931,15 +1931,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
     cb(selected_experts, "ffn_moe_topk", il);
 
-    // dyn-ex: skip remap for now (debug)
     ggml_tensor * selected_experts_slots = selected_experts;
-    // if (slot_map != nullptr) {
-    //     ggml_tensor * se_cont = ggml_cont(ctx0, selected_experts);
-    //     ggml_tensor * flat_ids = ggml_reshape_3d(ctx0, se_cont, n_expert_used * n_tokens, 1, 1);
-    //     selected_experts_slots       = ggml_get_rows(ctx0, slot_map, flat_ids);
-    //     selected_experts_slots       = ggml_reshape_2d(ctx0, selected_experts_slots, n_expert_used, n_tokens);
-    //     cb(selected_experts_slots, "ffn_moe_slots", il);
-    // }
+    if (slot_map != nullptr && res != nullptr) {
+        // insert barrier op: GPU copies selected_experts to host buffer,
+        // busy-waits until CPU loads correct expert weights into slots
+        ggml_tensor * bar = ggml_dyn_ex_barrier_set(ctx0, selected_experts, res->dyn_ex_barrier[il]);
+        cb(bar, "ffn_moe_barrier", il);
+    }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
         // TODO: Use scalar div instead when/if implemented

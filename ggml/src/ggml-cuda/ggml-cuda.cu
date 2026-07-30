@@ -7,6 +7,7 @@
 #include "ggml-cuda/acc.cuh"
 #include "ggml-cuda/add-id.cuh"
 #include "ggml-cuda/arange.cuh"
+static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 #include "ggml-cuda/argmax.cuh"
 #include "ggml-cuda/argsort.cuh"
 #include "ggml-cuda/binbcast.cuh"
@@ -2157,6 +2158,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
                 default:
                     return false;
             }
+        case GGML_OP_DYN_EX_BARRIER:
+            ggml_cuda_op_dyn_ex_barrier(ctx, dst);
+            break;
             break;
         case GGML_OP_NORM:
             ggml_cuda_op_norm(ctx, dst);
@@ -5423,3 +5427,31 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
 }
 
 GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)
+
+// dyn-ex: GPU→CPU barrier kernel
+__global__ void dyn_ex_barrier_kernel(
+    int32_t * __restrict__ buf,
+    const int32_t * __restrict__ src,
+    int n_elements) {
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) {
+        buf[i] = src[i];
+    }
+    __syncthreads();
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        buf[n_elements] = 1;
+        __threadfence_system();
+        while (buf[n_elements + 1] == 0) {
+            __threadfence_system();
+        }
+    }
+}
+
+static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_tensor * src = dst->src[0];
+    int32_t * buf_d = (int32_t *)dst->data;
+    const int32_t * src_d = (const int32_t *)src->data;
+    int n_elements = (int)(src->ne[0] * src->ne[1]);
+    int threads = std::min(n_elements, 256);
+    int blocks = (n_elements + threads - 1) / threads;
+    dyn_ex_barrier_kernel<<<blocks, threads, 0, ctx.stream()>>>(buf_d, src_d, n_elements);
+}

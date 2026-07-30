@@ -1655,6 +1655,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             pimpl->dyn_ex->t_down[il]    = layer.ffn_down_exps;
         }
 
+        dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, gpu_dev, n_layer_all, (int)hparams.n_expert_used);
+
         dyn_ex_cache_fill(pimpl->dyn_ex);
 
         // load predictor if specified

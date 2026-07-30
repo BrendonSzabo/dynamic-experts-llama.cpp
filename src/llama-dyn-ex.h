@@ -109,6 +109,8 @@ struct dyn_ex_cache {
     // per-layer selected_experts capture buffers (GPU→CPU readback after graph compute)
     std::vector<ggml_backend_buffer_ptr> buf_se_capture; // [n_layers]
     std::vector<ggml_tensor *>           t_se_capture;   // [n_layers] I32, [n_expert_used, n_tokens]
+    std::vector<ggml_backend_buffer_ptr> buf_barrier; // per-layer barrier buffers (host-visible)
+    std::vector<ggml_tensor *>           t_barrier;   // per-layer barrier tensors
 
     size_t gate_up_stride = 0; // bytes per slot in gate_up buffer (aligned)
     size_t gate_stride    = 0; // bytes per slot in gate buffer (separate, aligned)
@@ -138,6 +140,7 @@ void dyn_ex_cache_ensure(struct dyn_ex_cache * cache, int layer, const int * exp
 
 // fill initial slots with first n_slots experts of each layer
 void dyn_ex_cache_fill(struct dyn_ex_cache * cache);
+void dyn_ex_cache_alloc_barriers(struct dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used);
 
 // async prefetch: start loading expert_ids into slots without blocking.
 // scores: optional (n_expert) array for eviction priority (higher = keep). may be nullptr.

@@ -275,7 +275,6 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #else
 #   define GGML_UNREACHABLE() ((void) 0)
 #endif
-
 #ifdef __cplusplus
 #   define GGML_NORETURN [[noreturn]]
 #elif defined(_MSC_VER)
@@ -340,7 +339,6 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
     GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb) \
     GGML_TENSOR_LOCALS(int64_t, ne1, src1, ne) \
     GGML_TENSOR_LOCALS(size_t,  nb1, src1, nb)
-
 #ifdef  __cplusplus
 extern "C" {
 #endif
@@ -590,6 +588,8 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_DYN_EX_BARRIER,
+
         GGML_OP_COUNT,
     };
 
@@ -710,8 +710,6 @@ extern "C" {
     // If not NULL, called before ggml computation
     // If it returns true, the computation is aborted
     typedef bool (*ggml_abort_callback)(void * data);
-
-
     //
     // GUID
     //
@@ -1262,8 +1260,6 @@ extern "C" {
     GGML_API struct ggml_tensor * ggml_trunc_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
-
-
 
     // xIELU activation function
     // x = x * (c_a(alpha_n) + c_b(alpha_p, beta) * sigmoid(beta * x)) + eps * (x > 0)
@@ -1980,8 +1976,6 @@ extern "C" {
             float                 attn_factor,
             float                 beta_fast,
             float                 beta_slow);
-
-
     // clamp
     // in-place, returns view(a)
     GGML_API struct ggml_tensor * ggml_clamp(
@@ -2859,7 +2853,6 @@ extern "C" {
                    int64_t   nrows,
                    int64_t   n_per_row,
                const float * imatrix);
-
 #ifdef __cplusplus
     // restrict not standard in C++
 #    if defined(__GNUC__)
@@ -2924,7 +2917,13 @@ extern "C" {
     GGML_API struct ggml_threadpool_params ggml_threadpool_params_default(int n_threads);
     GGML_API void                          ggml_threadpool_params_init   (struct ggml_threadpool_params * p, int n_threads);
     GGML_API bool                          ggml_threadpool_params_match  (const struct ggml_threadpool_params * p0, const struct ggml_threadpool_params * p1);
+    // dyn-ex: GPU→CPU barrier
+    GGML_API struct ggml_tensor * ggml_dyn_ex_barrier_set(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * src,
+            struct ggml_tensor  * dst);
 
 #ifdef  __cplusplus
 }
 #endif
+

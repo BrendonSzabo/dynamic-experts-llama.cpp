@@ -1,6 +1,7 @@
 #include "llama-context.h"
 
 #include "ggml.h"
+#include <thread>
 #include "llama-arch.h"
 #include "llama-dyn-ex.h"
 #include "llama-graph.h"
@@ -1348,6 +1349,11 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
         //const auto t_start_us = ggml_time_us();
 
+        // dyn-ex: set up barrier tensors before graph building
+        if (model.has_dyn_ex()) {
+            res->dyn_ex_barrier = model.dyn_ex_get_cache()->t_barrier;
+        }
+
         gf = model.build_graph(gparams);
 
         //LLAMA_LOG_INFO("graph build time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
@@ -1372,54 +1378,29 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-    // dyn-ex: split graph compute for first token (router → ensure → experts)
-    {
-        static bool first_token = true;
-        if (first_token && model.has_dyn_ex()) {
-            first_token = false;
 
-            ggml_cgraph * gf = res->get_gf();
-            int n_nodes = ggml_graph_n_nodes(gf);
-
-            // verify slot tensor data pointers match slot buffers
-            auto * de = model.dyn_ex_get_cache();
-            for (int il = 0; il < model.hparams.n_layer_all && il < 2; il++) {
-                auto & L = model.layers[il];
-                if (L.ffn_gate_exps && de) {
-                    void * buf_base = ggml_backend_buffer_get_base(de->buf_gate.get());
-                    fprintf(stderr, "dyn-ex: L%d gate_exps data=%p buf_base=%p in_range=%d\n", il,
-                        L.ffn_gate_exps->data, buf_base,
-                        (char*)L.ffn_gate_exps->data >= (char*)buf_base &&
-                        (char*)L.ffn_gate_exps->data < (char*)buf_base + ggml_backend_buffer_get_size(de->buf_gate.get()));
-                }
+    // dyn-ex: barrier thread loads experts while GPU busy-waits in custom op
+    std::thread barrier_thread;
+    if (model.has_dyn_ex()) {
+        auto * cache = model.dyn_ex_get_cache();
+        int n_layers = (int)cache->t_barrier.size();
+        barrier_thread = std::thread([cache, this, n_layers]() {
+            for (int il = 0; il < n_layers; il++) {
+                auto * t = cache->t_barrier[il];
+                if (!t) continue;
+                int32_t * buf = (int32_t *)t->data;
+                if (!buf) continue;
+                int n_se = (int)t->ne[0] - 2;
+                while (buf[n_se] == 0) { /* spin */ }
+                model.dyn_ex_ensure_layer(il, buf, n_se);
+                buf[n_se + 1] = 1;
             }
-            res->set_inputs(&ubatch);
-            auto s1 = graph_compute(gf, ubatch.n_tokens > 1);
-            if (s1 != GGML_STATUS_SUCCESS) { ret = s1; return nullptr; }
-
-            // read selected_experts for all MoE layers
-            // (they're named "ffn_moe_topk_X" and survived compute)
-            for (int i = 0; i < n_nodes; i++) {
-                ggml_tensor * t = ggml_graph_node(gf, i);
-                const char * name = ggml_get_name(t);
-                if (strncmp(name, "ffn_moe_topk", 12) != 0) continue;
-                int il = -1;
-                sscanf(name, "ffn_moe_topk_%d", &il);
-                if (il < 0 || il >= model.hparams.n_layer_all) continue;
-
-                std::vector<int> ids(t->ne[0] * t->ne[1]);
-                ggml_backend_tensor_get(t, ids.data(), 0, ids.size() * sizeof(int));
-                model.dyn_ex_ensure_layer(il, ids.data(), (int)ids.size());
-            }
-
-            // pass 2: re-allocate and recompute with correct slot data
-            ggml_backend_sched_reset(sched.get());
-            ggml_backend_sched_alloc_graph(sched.get(), gf);
-            res->set_inputs(&ubatch);
-        }
+        });
     }
 
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
+
+    if (barrier_thread.joinable()) barrier_thread.join();
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;

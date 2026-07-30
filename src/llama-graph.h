@@ -848,6 +848,8 @@ public:
     std::vector<llm_graph_input_ptr> inputs;
     std::vector<llm_graph_fused_node> fused_nodes;
 
+    std::vector<ggml_tensor *> dyn_ex_barrier; // per-layer barrier tensors (set by build_moe_ffn)
+
     ggml_context_ptr ctx_compute;
 
     // memory buffers used to evaluate the model

@@ -761,3 +761,23 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
         }
     }
 }
+
+void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
+    int n_elements = n_expert_used * 4096; // generous max tokens
+    int64_t total = n_elements + 2;
+    auto * host_buft = ggml_backend_dev_host_buffer_type(dev);
+    if (!host_buft) return;
+
+    for (int i = 0; i < n_layers; i++) {
+        auto buf = ggml_backend_buft_alloc_buffer(host_buft, total * sizeof(int32_t));
+        if (!buf) continue;
+        auto * t = new ggml_tensor();
+        memset(t, 0, sizeof(ggml_tensor));
+        t->type = GGML_TYPE_I32;
+        t->ne[0] = total; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
+        t->nb[0] = sizeof(int32_t); t->nb[1] = sizeof(int32_t) * total; t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
+        ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
+        cache->buf_barrier.push_back(ggml_backend_buffer_ptr(buf));
+        cache->t_barrier.push_back(t);
+    }
+}
