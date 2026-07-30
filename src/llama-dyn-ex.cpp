@@ -397,6 +397,11 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
     if (!expert_ids || n_ids <= 0) return;
 
+    fprintf(stderr, "dyn-ex ensure: L%d loading %d experts: [%d,%d,%d,%d,%d,%d,%d,%d] gate_buf=%p\n",
+        layer, n_ids, expert_ids[0], n_ids>1?expert_ids[1]:-1, n_ids>2?expert_ids[2]:-1, n_ids>3?expert_ids[3]:-1,
+        n_ids>4?expert_ids[4]:-1, n_ids>5?expert_ids[5]:-1, n_ids>6?expert_ids[6]:-1, n_ids>7?expert_ids[7]:-1,
+        (void*)(cache->buf_gate ? ggml_backend_buffer_get_base(cache->buf_gate.get()) : nullptr));
+
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
     const int layer_off_expert = layer * n_experts;

@@ -1364,12 +1364,12 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             return nullptr;
         }
 
-        // dyn-ex: save barrier tensor buf/data before scheduler overrides them
-        std::vector<std::pair<ggml_backend_buffer_t, void*>> saved_barriers;
+        // dyn-ex: verify scheduler doesn't change slot buffers
+        std::vector<std::pair<void*,void*>> slot_saved;
         if (model.has_dyn_ex()) {
-            auto * de = model.dyn_ex_get_cache();
-            for (auto * t : de->t_barrier) {
-                saved_barriers.push_back({t ? t->buffer : nullptr, t ? t->data : nullptr});
+            for (int il = 0; il < model.hparams.n_layer_all; il++) {
+                auto * t = model.layers[il].ffn_gate_exps;
+                if (t) slot_saved.push_back({t->buffer, t->data});
             }
         }
 
@@ -1379,14 +1379,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             return nullptr;
         }
 
-        // dyn-ex: restore barrier buf/data (scheduler may have changed them)
-        if (model.has_dyn_ex()) {
-            auto * de = model.dyn_ex_get_cache();
-            for (int il = 0; il < (int)de->t_barrier.size() && il < (int)saved_barriers.size(); il++) {
-                if (de->t_barrier[il]) {
-                    de->t_barrier[il]->buffer = saved_barriers[il].first;
-                    de->t_barrier[il]->data   = saved_barriers[il].second;
-                }
+        // verify slot buffers unchanged after alloc
+        for (int il = 0; il < (int)slot_saved.size(); il++) {
+            auto * t = model.layers[il].ffn_gate_exps;
+            if (!t) continue;
+            if (t->buffer != slot_saved[il].first || t->data != slot_saved[il].second) {
+                fprintf(stderr, "dyn-ex: L%d gate buffer CHANGED buf=%p->%p data=%p->%p\n",
+                    il, slot_saved[il].first, (void*)t->buffer, slot_saved[il].second, t->data);
+                // restore
+                t->buffer = (ggml_backend_buffer_t)slot_saved[il].first;
+                t->data   = slot_saved[il].second;
             }
         }
     }
@@ -1399,35 +1401,41 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     }
 
 
-    // dyn-ex: barrier thread loads experts while GPU busy-waits in custom op
-    std::thread barrier_thread;
+    // dyn-ex: register eval callback for barrier ops (GPU→CPU sync for expert loading)
     if (model.has_dyn_ex()) {
-        auto * cache = model.dyn_ex_get_cache();
-        int n_layers = (int)cache->t_barrier.size();
-        barrier_thread = std::thread([cache, this, n_layers]() {
-            fprintf(stderr, "dyn-ex CPU: barrier thread started, %d layers\n", n_layers);
-            for (int il = 0; il < n_layers; il++) {
-                auto * t = cache->t_barrier[il];
-                if (!t) continue;
-                int n_se = (int)t->ne[0] - 2;
-                int32_t ready = 0;
-                while (ready == 0) {
-                    ggml_backend_tensor_get(t, &ready, n_se * sizeof(int32_t), sizeof(int32_t));
-                }
-                std::vector<int32_t> ids(n_se);
-                ggml_backend_tensor_get(t, ids.data(), 0, n_se * sizeof(int32_t));
-                fprintf(stderr, "dyn-ex CPU: L%d ready, n_se=%d se[0]=%d se[1]=%d\n", il, n_se, ids[0], ids[1]);
-                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
-                int32_t go = 1;
-                ggml_backend_tensor_set(t, &go, (n_se + 1) * sizeof(int32_t), sizeof(int32_t));
+        ggml_backend_sched_set_eval_callback(sched.get(), [](ggml_tensor * t, bool ask, void * user_data) -> bool {
+            fprintf(stderr, "dyn-ex cb: op=%d ask=%d name=%s\n", t->op, ask, ggml_get_name(t));
+            if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
+            auto * model = (const llama_model *)user_data;
+            if (!model->has_dyn_ex()) return false;
+
+            if (ask) {
+                fprintf(stderr, "dyn-ex cb: sync before barrier node\n");
+                return true;
             }
-            fprintf(stderr, "dyn-ex CPU: all layers done\n");
-        });
+
+            ggml_tensor * src = t->src[0];
+            int n_se = (int)(src->ne[0] * src->ne[1]);
+            std::vector<int32_t> ids(n_se);
+            ggml_backend_tensor_get(t, ids.data(), 0, n_se * sizeof(int32_t));
+
+            const char * name = ggml_get_name(t);
+            int il = 0;
+            if (strncmp(name, "dyn_ex_barrier_", 15) == 0) il = atoi(name + 15);
+
+            fprintf(stderr, "dyn-ex cb: L%d n_se=%d ids=[%d,%d,%d,%d,%d,%d,%d,%d] buf=%p data=%p\n",
+                il, n_se, ids[0], n_se>1?ids[1]:-1, n_se>2?ids[2]:-1, n_se>3?ids[3]:-1,
+                n_se>4?ids[4]:-1, n_se>5?ids[5]:-1, n_se>6?ids[6]:-1, n_se>7?ids[7]:-1,
+                (void*)t->buffer, t->data);
+
+            model->dyn_ex_ensure_layer(il, ids.data(), n_se);
+            fprintf(stderr, "dyn-ex cb: L%d ensure done\n", il);
+            return true;
+        }, (void*)&model);
     }
 
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
 
-    if (barrier_thread.joinable()) barrier_thread.join();
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;
