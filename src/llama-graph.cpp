@@ -1953,15 +1953,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_build_forward_expand(gf, se_cont);
         ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
         selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
-        // get_rows output is [1, N, 1, 1] — make contiguous for reshape
-        selected_experts_slots = ggml_cpy(ctx0, selected_experts_slots, 
-            ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0] * selected_experts->ne[1], 1));
-        ggml_build_forward_expand(gf, selected_experts_slots);
+        // reshape to match source shape
         selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
-        selected_experts_slots = ggml_cpy(ctx0, selected_experts_slots,
-            ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]));
-        ggml_build_forward_expand(gf, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
+        fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
+            selected_experts_slots->nb[0], selected_experts_slots->nb[1],
+            selected_experts_slots->nb[2], selected_experts_slots->nb[3],
+            (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
     }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
