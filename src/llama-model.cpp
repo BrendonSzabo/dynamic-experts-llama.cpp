@@ -1564,13 +1564,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             throw std::runtime_error(format("dyn-ex: failed to open %s", params.dyn_ex_path));
         }
 
-        // find GPU device for the first expert layer
+        // find GPU device — use first GPU in dev_layer (TENSOR_SKIP makes expert tensors null)
         ggml_backend_dev_t gpu_dev = cpu_dev;
-        for (int il = 0; il < n_layer_all; il++) {
-            if (layers[il].ffn_gate_up_exps || layers[il].ffn_gate_exps || layers[il].ffn_down_exps) {
-                gpu_dev = pimpl->dev_layer[il].dev;
-                break;
-            }
+        if (!pimpl->gpu_buft_list.empty()) {
+            gpu_dev = pimpl->gpu_buft_list.begin()->first;
         }
 
         // grab original expert tensor metadata from first MoE layer

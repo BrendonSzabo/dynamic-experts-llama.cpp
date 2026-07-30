@@ -1360,7 +1360,10 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
 
                 if (src_backend_id != cur_backend_id && !ggml_backend_sched_buffer_supported(sched, src, cur_backend_id)) {
                     // create a copy of the input in the split's backend
-                    if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL && !(src->flags & GGML_TENSOR_FLAG_EXTERNAL)) {
+                    if (tensor_id_copy(src_id, cur_backend_id, 0) == NULL) {
+                        if (src->flags & GGML_TENSOR_FLAG_EXTERNAL) {
+                            tensor_id_copy(src_id, cur_backend_id, 0) = src; // use original
+                        } else {
                         ggml_backend_t backend = sched->backends[cur_backend_id];
                         for (int c = 0; c < sched->n_copies; c++) {
                             struct ggml_tensor * tensor_copy = ggml_dup_tensor_layout(sched->ctx, src);
@@ -1375,6 +1378,7 @@ void ggml_backend_sched_split_graph(ggml_backend_sched_t sched, struct ggml_cgra
                         int n_inputs = split->n_inputs++;
                         GGML_ASSERT(n_inputs < GGML_SCHED_MAX_SPLIT_INPUTS);
                         split->inputs[n_inputs] = src;
+                        } // close if tensor_id_copy else
                     }
                     node->src[j] = tensor_id_copy(src_id, cur_backend_id, sched->cur_copy);
                 }

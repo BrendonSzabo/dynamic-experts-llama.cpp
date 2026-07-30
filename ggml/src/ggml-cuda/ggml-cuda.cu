@@ -2024,6 +2024,13 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_repeat_back(ctx, dst);
             break;
         case GGML_OP_GET_ROWS:
+            if (!dst || !dst->src[0] || !dst->src[1]) {
+                fprintf(stderr, "dyn-ex dispatch getrows NULL: dst=%p src0=%p src1=%p\n", (void*)dst, dst?(void*)dst->src[0]:0, dst?(void*)dst->src[1]:0);
+                fflush(stderr);
+                GGML_ABORT("null tensor in GET_ROWS");
+            }
+            fprintf(stderr, "dyn-ex dispatch getrows: dst=%s src0=%s\n", ggml_get_name(dst), ggml_get_name(dst->src[0]));
+            fflush(stderr);
             ggml_cuda_op_get_rows(ctx, dst);
             break;
         case GGML_OP_GET_ROWS_BACK:
@@ -4026,9 +4033,24 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 assert(node->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device));
                 for (int j = 0; j < GGML_MAX_SRC; j++) {
                     if (node->src[j] != nullptr) {
+                        if (!node->src[j]->buffer ||
+                            !(node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
+                              (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)))) {
+                            fprintf(stderr, "dyn-ex CUDA assert: node=%s src[%d]=%s buffer=%p buft=%p cuda_buft=%p\n",
+                                ggml_get_name(node), j, ggml_get_name(node->src[j]),
+                                (void*)node->src[j]->buffer,
+                                node->src[j]->buffer ? (void*)node->src[j]->buffer->buft : nullptr,
+                                (void*)ggml_backend_cuda_buffer_type(cuda_ctx->device));
+                            fflush(stderr);
+                        }
                         assert(node->src[j]->buffer);
-                        assert(node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
-                               (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)));
+                        // allow if same device (different buft objects can both be CUDA)
+                        bool same_device = node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
+                            (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)) ||
+                            (node->src[j]->buffer->buft && ggml_backend_cuda_buffer_type(cuda_ctx->device) &&
+                             ggml_backend_buft_get_device(node->src[j]->buffer->buft) ==
+                             ggml_backend_buft_get_device(ggml_backend_cuda_buffer_type(cuda_ctx->device)));
+                        assert(same_device);
                     }
                 }
 #else
