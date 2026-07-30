@@ -1935,8 +1935,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     ggml_tensor * selected_experts_slots = selected_experts;
 
-    // barrier: GPU writes expert IDs, CPU loads weights, GPU continues
-    if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
+    // barrier DISABLED for test
+    if (false && !is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;

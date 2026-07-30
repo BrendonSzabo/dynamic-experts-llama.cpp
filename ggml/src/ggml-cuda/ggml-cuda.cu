@@ -2213,6 +2213,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
+            { cudaError_t e = cudaGetLastError(); if (e != cudaSuccess) fprintf(stderr, "dyn-ex MUL_MAT_ID ERROR: %s dst=%s\n", cudaGetErrorString(e), ggml_get_name(dst)); fflush(stderr); }
             break;
         case GGML_OP_OUT_PROD:
             ggml_cuda_out_prod(ctx, dst);

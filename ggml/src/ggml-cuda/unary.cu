@@ -346,6 +346,13 @@ void ggml_cuda_op_geglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 }
 
 void ggml_cuda_op_swiglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    fprintf(stderr, "dyn-ex swiglu: %s src0 ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] src1 ne=[%lld,%lld,%lld] data=%p\n",
+        ggml_get_name(dst),
+        dst->src[0] ? (long long)dst->src[0]->ne[0] : -1, dst->src[0] ? (long long)dst->src[0]->ne[1] : -1, dst->src[0] ? (long long)dst->src[0]->ne[2] : -1,
+        dst->src[0] ? dst->src[0]->nb[0] : 0, dst->src[0] ? dst->src[0]->nb[1] : 0, dst->src[0] ? dst->src[0]->nb[2] : 0,
+        dst->src[1] ? (long long)dst->src[1]->ne[0] : -1, dst->src[1] ? (long long)dst->src[1]->ne[1] : -1, dst->src[1] ? (long long)dst->src[1]->ne[2] : -1,
+        dst->src[0] ? (void*)dst->src[0]->data : nullptr);
+    fflush(stderr);
     ggml_cuda_op_unary_gated<op_silu>(ctx, dst);
 }
 
