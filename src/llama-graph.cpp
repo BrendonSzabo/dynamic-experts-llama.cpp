@@ -1955,6 +1955,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
         // reshape to match source shape
         selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
+        selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
         fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
             selected_experts_slots->nb[0], selected_experts_slots->nb[1],

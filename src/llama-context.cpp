@@ -1430,6 +1430,18 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 while (buf[n_total - 2] == 0) {}
                 fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d\n", il, buf[1], buf[2]);
                 model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
+                // verify: compute expected slot indices vs what remap will use
+                if (il == 0) {
+                    auto * sm = model.layers[il].ffn_slot_map;
+                    fprintf(stderr, "dyn-ex L0 expected slots: ");
+                    for (int k = 0; k < buf[1] && k < 8; k++) {
+                        int eid = buf[2 + k];
+                        int32_t sv;
+                        ggml_backend_tensor_get(sm, &sv, eid * 4, 4);
+                        fprintf(stderr, "e%d→s%d ", eid, sv);
+                    }
+                    fprintf(stderr, "\n");
+                }
                 buf[n_total - 1] = 1;
                 fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
             }
