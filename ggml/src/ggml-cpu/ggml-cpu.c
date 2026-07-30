@@ -2038,10 +2038,11 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 int n_elements = (int)(src->ne[0] * src->ne[1]);
                 int32_t * buf = (int32_t *)tensor->data;
                 int n_total = (int)tensor->ne[0];
-                fprintf(stderr, "dyn-ex CPU: copy n_e=%d n_tot=%d\n", n_elements, n_total);
+                fprintf(stderr, "dyn-ex CPU: n_e=%d n_tot=%d buf=%p src=%p\n", n_elements, n_total, (void*)buf, (void*)src->data);
                 buf[1] = n_elements;
                 memcpy(buf + 2, src->data, n_elements * sizeof(int32_t));
-                buf[n_total - 2] = 1;
+                buf[n_total - 2] = 1; // ready
+                fprintf(stderr, "dyn-ex CPU: wrote buf[1]=%d buf[0]=%d buf[2]=%d ready=%d\n", buf[1], buf[0], buf[2], buf[n_total-2]);
                 fprintf(stderr, "dyn-ex CPU: ready set, spinning\n");
                 while (buf[n_total - 1] == 0) { /* spin */ }
                 fprintf(stderr, "dyn-ex CPU: go!\n");

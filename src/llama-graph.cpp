@@ -1945,15 +1945,12 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(selected_experts_slots, "ffn_moe_slots", il);
     }
 
-    // barrier: GPU writes expert IDs, CPU loads weights, GPU continues
-    if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size()) {
-        int64_t n_elements = selected_experts->ne[0] * selected_experts->ne[1];
-        ggml_tensor * bar = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_elements + 2, 1);
-        ggml_set_name(bar, "dyn_ex_barrier");
+    // barrier: GPU writes expert IDs to pre-allocated cudaHostAllocMapped buffer
+    if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
+        ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
         ggml_build_forward_expand(gf, bar);
-        (*dyn_ex_barrier)[il] = bar;
         cb(bar, "ffn_moe_barrier", il);
     }
 

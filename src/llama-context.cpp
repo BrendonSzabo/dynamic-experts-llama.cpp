@@ -1405,45 +1405,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     }
 
 
-    // dyn-ex: barrier thread polls ready flag, loads experts, sets go
+    // dyn-ex: barrier thread reads host pointers directly (cudaHostAllocMapped)
     std::thread barrier_thread;
     if (model.has_dyn_ex()) {
-        // find barrier tensors in graph (set during build, survive reuse)
-        std::vector<ggml_tensor *> barriers;
-        ggml_cgraph * gf = res->get_gf();
-        int n_barrier = 0, n_other = 0;
-        for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
-            ggml_tensor * t = ggml_graph_node(gf, i);
-            if (t->op == GGML_OP_DYN_EX_BARRIER) { barriers.push_back(t); n_barrier++; }
-            else if (strncmp(ggml_get_name(t), "dyn_ex_barrier", 13) == 0) n_barrier++;
-            else n_other++;
-        }
-        fprintf(stderr, "dyn-ex thread: total nodes=%d barriers=%d other=%d\n", ggml_graph_n_nodes(gf), n_barrier, n_other);
-        int n_layers = (int)barriers.size();
-        fprintf(stderr, "dyn-ex thread: found %d barriers in graph\n", n_layers);
-        barrier_thread = std::thread([this, barriers = std::move(barriers), n_layers]() {
-            fprintf(stderr, "dyn-ex thread: started\n");
+        auto * de = model.dyn_ex_get_cache();
+        int n_layers = (int)de->t_barrier_host.size();
+        barrier_thread = std::thread([this, de, n_layers]() {
             for (int il = 0; il < n_layers; il++) {
-                auto * t = barriers[il];
-                if (!t || !t->data) { fprintf(stderr, "dyn-ex thread: L%d null\n", il); continue; }
-                int n_total = (int)t->ne[0];
-                fprintf(stderr, "dyn-ex thread: L%d polling ready n_tot=%d\n", il, n_total);
-                int32_t ready = 0;
-                while (ready == 0) {
-                    ggml_backend_tensor_get(t, &ready, (n_total - 2) * sizeof(int32_t), sizeof(int32_t));
-                }
-                int32_t n_se = 0;
-                ggml_backend_tensor_get(t, &n_se, 1 * sizeof(int32_t), sizeof(int32_t));
-                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d\n", il, n_se);
-                std::vector<int32_t> ids(n_se);
-                ggml_backend_tensor_get(t, ids.data(), 2 * sizeof(int32_t), n_se * sizeof(int32_t));
-                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
-                int32_t go = 1;
-                ggml_backend_tensor_set(t, &go, (n_total - 1) * sizeof(int32_t), sizeof(int32_t));
-#ifdef GGML_USE_CUDA
-                cudaDeviceSynchronize(); // flush async set so GPU spin sees it
-#endif
-                fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
+                int32_t * buf = (int32_t *)de->t_barrier_host[il];
+                if (!buf) continue;
+                int n_total = (int)de->t_barrier[il]->ne[0];
+                while (buf[n_total - 2] == 0) {}
+                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d\n", il, buf[1], buf[2]);
+                model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
+                buf[n_total - 1] = 1;
             }
         });
     }
