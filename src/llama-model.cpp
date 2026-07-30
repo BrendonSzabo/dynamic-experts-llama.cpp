@@ -1606,6 +1606,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             t->nb[1] = t->nb[0] * (ne0 / blck);
             t->nb[2] = t->nb[1] * ne1;
             t->nb[3] = t->nb[2] * n_slots;
+            t->flags = GGML_TENSOR_FLAG_EXTERNAL;
 
             ggml_backend_tensor_alloc(slot_buf.get(), t, (char *)ggml_backend_buffer_get_base(slot_buf.get()) + offset);
             return t;
@@ -1626,6 +1627,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_slot_map->nb[1]  = sizeof(int32_t);
             layer.ffn_slot_map->nb[2]  = (size_t)sizeof(int32_t) * hparams.n_expert;
             layer.ffn_slot_map->nb[3]  = layer.ffn_slot_map->nb[2];
+            layer.ffn_slot_map->flags   = GGML_TENSOR_FLAG_EXTERNAL;
             size_t sm_offset = (size_t)il * hparams.n_expert * sizeof(int32_t);
             ggml_backend_tensor_alloc(pimpl->dyn_ex->buf_slot_map.get(), layer.ffn_slot_map,
                 (char *)ggml_backend_buffer_get_base(pimpl->dyn_ex->buf_slot_map.get()) + sm_offset);

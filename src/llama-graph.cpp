@@ -1953,10 +1953,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_build_forward_expand(gf, se_cont);
         ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
         selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
-        // reshape to match source shape
         selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
         selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
+        fprintf(stderr, "dyn-ex remap L%d: slots.nb=[%zu,%zu] slots.ne=[%lld,%lld] gate.nb=[%zu,%zu,%zu] gate.ne=[%lld,%lld,%lld]\n",
+            il, selected_experts_slots->nb[0], selected_experts_slots->nb[1],
+            (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1],
+            gate_up_exps ? gate_up_exps->nb[0] : (size_t)-1,
+            gate_up_exps ? gate_up_exps->nb[1] : (size_t)-1,
+            gate_up_exps ? gate_up_exps->nb[2] : (size_t)-1,
+            gate_up_exps ? (long long)gate_up_exps->ne[0] : -1,
+            gate_up_exps ? (long long)gate_up_exps->ne[1] : -1,
+            gate_up_exps ? (long long)gate_up_exps->ne[2] : -1);
         fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
             selected_experts_slots->nb[0], selected_experts_slots->nb[1],
             selected_experts_slots->nb[2], selected_experts_slots->nb[3],

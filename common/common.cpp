@@ -1491,7 +1491,9 @@ common_context_seq_rm_type common_context_can_seq_rm(llama_context * ctx) {
     tmp.push_back(0);
     tmp.push_back(0);
 
+    fprintf(stderr, "dyn-ex can_seq_rm: about to decode 2 tokens\n");
     int ret = llama_decode(ctx, llama_batch_get_one(tmp.data(), tmp.size()));
+    fprintf(stderr, "dyn-ex can_seq_rm: decode returned %d\n", ret);
     if (ret != 0) {
         COM_ERR("llama_decode() failed: %d\n", ret);
         res = COMMON_CONTEXT_SEQ_RM_TYPE_NO;
