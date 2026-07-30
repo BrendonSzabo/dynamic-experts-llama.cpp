@@ -131,6 +131,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     struct dyn_ex_reader * reader,
     int n_slots,
     ggml_backend_dev_t dev,
+    ggml_backend_buffer_type_t buft,
     struct ggml_tensor * expert_gate_up,  // can be nullptr (for separate gate/up models)
     struct ggml_tensor * expert_gate,     // can be nullptr
     struct ggml_tensor * expert_up,       // can be nullptr

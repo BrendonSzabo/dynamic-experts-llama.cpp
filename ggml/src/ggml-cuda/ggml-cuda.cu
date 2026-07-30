@@ -2025,11 +2025,11 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_GET_ROWS:
             if (!dst || !dst->src[0] || !dst->src[1]) {
-                fprintf(stderr, "dyn-ex dispatch getrows NULL: dst=%p src0=%p src1=%p\n", (void*)dst, dst?(void*)dst->src[0]:0, dst?(void*)dst->src[1]:0);
+                if(0)fprintf(stderr, "dyn-ex dispatch getrows NULL: dst=%p src0=%p src1=%p\n", (void*)dst, dst?(void*)dst->src[0]:0, dst?(void*)dst->src[1]:0);
                 fflush(stderr);
                 GGML_ABORT("null tensor in GET_ROWS");
             }
-            fprintf(stderr, "dyn-ex dispatch getrows: dst=%s src0=%s\n", ggml_get_name(dst), ggml_get_name(dst->src[0]));
+            if(0)fprintf(stderr, "dyn-ex dispatch getrows: dst=%s src0=%s\n", ggml_get_name(dst), ggml_get_name(dst->src[0]));
             fflush(stderr);
             ggml_cuda_op_get_rows(ctx, dst);
             break;
@@ -2213,7 +2213,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
-            { cudaError_t e = cudaGetLastError(); if (e != cudaSuccess) fprintf(stderr, "dyn-ex MUL_MAT_ID ERROR: %s dst=%s\n", cudaGetErrorString(e), ggml_get_name(dst)); fflush(stderr); }
+            { cudaError_t e = cudaGetLastError(); if (e != cudaSuccess) if(0)fprintf(stderr, "dyn-ex MUL_MAT_ID ERROR: %s dst=%s\n", cudaGetErrorString(e), ggml_get_name(dst)); fflush(stderr); }
             break;
         case GGML_OP_OUT_PROD:
             ggml_cuda_out_prod(ctx, dst);
@@ -4037,7 +4037,7 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                         if (!node->src[j]->buffer ||
                             !(node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
                               (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)))) {
-                            fprintf(stderr, "dyn-ex CUDA assert: node=%s src[%d]=%s buffer=%p buft=%p cuda_buft=%p\n",
+                            if(0)fprintf(stderr, "dyn-ex CUDA assert: node=%s src[%d]=%s buffer=%p buft=%p cuda_buft=%p\n",
                                 ggml_get_name(node), j, ggml_get_name(node->src[j]),
                                 (void*)node->src[j]->buffer,
                                 node->src[j]->buffer ? (void*)node->src[j]->buffer->buft : nullptr,

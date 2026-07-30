@@ -1573,6 +1573,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         // grab original expert tensor metadata from first MoE layer
         pimpl->dyn_ex = dyn_ex_cache_init(
             reader, params.dyn_ex_n_slots, gpu_dev,
+            pimpl->gpu_buft_list.begin()->second[0].second,
             nullptr, nullptr, nullptr, nullptr);
         if (!pimpl->dyn_ex) {
             dyn_ex_reader_close(reader);
@@ -2907,6 +2908,10 @@ bool llama_model_has_encoder(const llama_model * model) {
         case LLM_ARCH_DFLASH:    return true;
         default:                 return false;
     }
+}
+
+bool llama_model_has_dyn_ex(const llama_model * model) {
+    return model->has_dyn_ex();
 }
 
 bool llama_model_has_decoder(const llama_model * model) {

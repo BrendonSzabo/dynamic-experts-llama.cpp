@@ -857,7 +857,7 @@ static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, co
         }
     }
     if (found == -1 && strncmp(ggml_op_name(op->op), "GET_ROWS", 8) == 0) {
-        fprintf(stderr, "dyn-ex sched GET_ROWS: no backend in %d backends, src0=%s\n", sched->n_backends, op->src[0] ? ggml_get_name(op->src[0]) : "null");
+        if(0)fprintf(stderr, "dyn-ex sched GET_ROWS: no backend in %d backends, src0=%s\n", sched->n_backends, op->src[0] ? ggml_get_name(op->src[0]) : "null");
     }
     return found;
 }

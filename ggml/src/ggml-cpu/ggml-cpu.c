@@ -2038,15 +2038,15 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 int n_elements = (int)(src->ne[0] * src->ne[1]);
                 int32_t * buf = (int32_t *)tensor->data;
                 int n_total = (int)tensor->ne[0];
-                fprintf(stderr, "dyn-ex CPU: n_e=%d n_tot=%d buf=%p src=%p src_data=%p\n",
+                if(0)fprintf(stderr, "dyn-ex CPU: n_e=%d n_tot=%d buf=%p src=%p src_data=%p\n",
                         n_elements, n_total, (void*)buf, (void*)src, (void*)src->data);
                 buf[1] = n_elements;
                 memcpy(buf + 2, src->data, n_elements * sizeof(int32_t));
                 buf[n_total - 2] = 1;
-                fprintf(stderr, "dyn-ex CPU: wrote buf[1]=%d buf[2]=%d buf[3]=%d buf[4]=%d ready=%d data=%p\n",
+                if(0)fprintf(stderr, "dyn-ex CPU: wrote buf[1]=%d buf[2]=%d buf[3]=%d buf[4]=%d ready=%d data=%p\n",
                         buf[1], buf[2], buf[3], buf[4], buf[n_total-2], (void*)(buf+2));
                 while (buf[n_total - 1] == 0) {}
-                fprintf(stderr, "dyn-ex CPU: go!\n");
+                if(0)fprintf(stderr, "dyn-ex CPU: go!\n");
             } break;
         case GGML_OP_GET_REL_POS:
             {

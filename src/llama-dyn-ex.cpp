@@ -245,6 +245,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     dyn_ex_reader * reader,
     int n_slots,
     ggml_backend_dev_t dev,
+    ggml_backend_buffer_type_t buft,
     ggml_tensor * /* expert_gate_up */,
     ggml_tensor * /* expert_gate */,
     ggml_tensor * /* expert_up */,
@@ -302,8 +303,8 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->h_expert_in.assign((size_t)n_layers * n_slots, DYN_EX_SENTINEL);
     cache->h_slot_used.assign((size_t)n_layers * n_slots, 0);
 
-    // create GPU buffers
-    ggml_backend_buffer_type_t buft = ggml_backend_dev_buffer_type(dev);
+    // create GPU buffers using scheduler's CUDA buft
+    (void)dev;
 
     // slot_map buffer: [n_layers * n_expert] int32
     size_t slot_map_bytes = (size_t)n_layers * n_experts * sizeof(int32_t);
@@ -415,7 +416,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         int s = cache->h_slot_of[layer * cache->n_experts + eid];
         if (s == DYN_EX_SENTINEL) n_unique++;
     }
-    //fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
+    //if(0)fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
 
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
@@ -507,7 +508,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         cache->h_slot_used[layer_off_slot + slot] = 1;
         slot_map_changed = true;
         if (eid == 249 && layer == 0) {
-            fprintf(stderr, "dyn-ex ensure L0: loaded eid=249 into slot=%d, h_slot_of[249]=%d\n",
+            if(0)fprintf(stderr, "dyn-ex ensure L0: loaded eid=249 into slot=%d, h_slot_of[249]=%d\n",
                     slot, cache->h_slot_of[layer_off_expert + 249]);
         }
     }
@@ -516,7 +517,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
     if (slot_map_changed && cache->buf_slot_map) {
         size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
         size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
-        fprintf(stderr, "dyn-ex: slot_map sync L%d off=%zu sz=%zu base=%p h[64]=%d\n",
+        if(0)fprintf(stderr, "dyn-ex: slot_map sync L%d off=%zu sz=%zu base=%p h[64]=%d\n",
                 layer, layer_byte_off, layer_byte_sz,
                 (void*)ggml_backend_buffer_get_base(cache->buf_slot_map.get()),
                 cache->h_slot_of[layer * n_experts + 64]);
@@ -536,7 +537,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         dummy.nb[0]  = 4;
         ggml_backend_tensor_get(&dummy, &v0, 0, 4);
         ggml_backend_tensor_get(&dummy, &v64, 64*4, 4);
-        fprintf(stderr, "dyn-ex: slot_map readback L%d v0=%d v64=%d\n", layer, v0, v64);
+        if(0)fprintf(stderr, "dyn-ex: slot_map readback L%d v0=%d v64=%d\n", layer, v0, v64);
     }
 }
 

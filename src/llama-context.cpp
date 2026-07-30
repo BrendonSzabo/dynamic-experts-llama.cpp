@@ -1387,7 +1387,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             auto * t = model.layers[il].ffn_gate_exps;
             if (!t) continue;
             if (t->buffer != slot_saved[il].first || t->data != slot_saved[il].second) {
-                fprintf(stderr, "dyn-ex: L%d gate buffer CHANGED buf=%p->%p data=%p->%p\n",
+                if(0)fprintf(stderr, "dyn-ex: L%d gate buffer CHANGED buf=%p->%p data=%p->%p\n",
                     il, slot_saved[il].first, (void*)t->buffer, slot_saved[il].second, t->data);
                 t->buffer = (ggml_backend_buffer_t)slot_saved[il].first;
                 t->data   = slot_saved[il].second;
@@ -1400,7 +1400,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             auto * de = model.dyn_ex_get_cache();
             void * base = ggml_backend_buffer_get_base(de->buf_slot_map.get());
             if (t->data < base || t->data >= (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get())) {
-                fprintf(stderr, "dyn-ex: L%d slot_map buffer CHANGED data=%p not in [%p-%p]\n",
+                if(0)fprintf(stderr, "dyn-ex: L%d slot_map buffer CHANGED data=%p not in [%p-%p]\n",
                     il, t->data, base, (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get()));
                 size_t sm_offset = (size_t)il * model.hparams.n_expert * sizeof(int32_t);
                 t->buffer = de->buf_slot_map.get();
@@ -1433,7 +1433,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 ggml_backend_tensor_get(t, &n_se, 4, 4);
                 std::vector<int32_t> ids(n_se);
                 ggml_backend_tensor_get(t, ids.data(), 8, n_se * 4);
-                fprintf(stderr, "dyn-ex thread: L%d n_se=%d ids[0]=%d\n", il, n_se, n_se>0?ids[0]:-1);
+                if(0)fprintf(stderr, "dyn-ex thread: L%d n_se=%d ids[0]=%d\n", il, n_se, n_se>0?ids[0]:-1);
                 model.dyn_ex_ensure_layer(il, ids.data(), n_se);
                 int32_t go = 1;
 #ifdef GGML_USE_CUDA
@@ -1453,7 +1453,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             ggml_backend_tensor_get(sm, &v100, 100*4, 4);
             ggml_backend_tensor_get(sm, &v200, 200*4, 4);
             if (v0 < 0 || v100 < 0 || v200 < 0) {
-                fprintf(stderr, "dyn-ex BAD slot_map L%d: [0]=%d [100]=%d [200]=%d\n", il, v0, v100, v200);
+                if(0)fprintf(stderr, "dyn-ex BAD slot_map L%d: [0]=%d [100]=%d [200]=%d\n", il, v0, v100, v200);
             }
         }
     }

@@ -641,6 +641,7 @@ extern "C" {
 
     // Returns true if the model contains an encoder that requires llama_encode() call
     LLAMA_API bool llama_model_has_encoder(const struct llama_model * model);
+    LLAMA_API bool llama_model_has_dyn_ex(const struct llama_model * model);
 
     // Returns true if the model contains a decoder that requires llama_decode() call
     LLAMA_API bool llama_model_has_decoder(const struct llama_model * model);

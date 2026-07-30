@@ -1482,6 +1482,10 @@ common_context_seq_rm_type common_context_can_seq_rm(llama_context * ctx) {
         return COMMON_CONTEXT_SEQ_RM_TYPE_NO;
     }
 
+    if (llama_model_has_dyn_ex(llama_get_model(ctx))) {
+        return COMMON_CONTEXT_SEQ_RM_TYPE_NO;
+    }
+
     common_context_seq_rm_type res = COMMON_CONTEXT_SEQ_RM_TYPE_PART;
 
     llama_memory_clear(mem, true);
