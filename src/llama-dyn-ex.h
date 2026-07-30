@@ -84,6 +84,9 @@ struct dyn_ex_cache {
     ggml_backend_buffer_ptr buf_down;    // [n_layers, n_slots, down_expert_size]
     ggml_backend_buffer_ptr buf_slot_map;
 
+    // per-layer slot_map host pointers (cudaHostAllocMapped, same as dev_ptr)
+    std::vector<void *> slot_map_host;  // [n_layers] — CPU writes here, GPU reads via tensors
+
     // GPU tensors pointing into the buffers
     struct ggml_tensor * slot_gate_up = nullptr; // shape [..., n_slots] for ggml_mul_mat_id
     struct ggml_tensor * slot_down    = nullptr; // shape [..., n_slots] for ggml_mul_mat_id

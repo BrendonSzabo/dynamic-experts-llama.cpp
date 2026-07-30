@@ -1389,12 +1389,24 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             if (t->buffer != slot_saved[il].first || t->data != slot_saved[il].second) {
                 fprintf(stderr, "dyn-ex: L%d gate buffer CHANGED buf=%p->%p data=%p->%p\n",
                     il, slot_saved[il].first, (void*)t->buffer, slot_saved[il].second, t->data);
-                // restore
                 t->buffer = (ggml_backend_buffer_t)slot_saved[il].first;
                 t->data   = slot_saved[il].second;
             }
         }
-
+        // also check slot_map
+        for (int il = 0; il < model.hparams.n_layer_all; il++) {
+            auto * t = model.layers[il].ffn_slot_map;
+            if (!t || !t->buffer) continue;
+            auto * de = model.dyn_ex_get_cache();
+            void * base = ggml_backend_buffer_get_base(de->buf_slot_map.get());
+            if (t->data < base || t->data >= (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get())) {
+                fprintf(stderr, "dyn-ex: L%d slot_map buffer CHANGED data=%p not in [%p-%p]\n",
+                    il, t->data, base, (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get()));
+                size_t sm_offset = (size_t)il * model.hparams.n_expert * sizeof(int32_t);
+                t->buffer = de->buf_slot_map.get();
+                t->data   = (char*)base + sm_offset;
+            }
+        }
     }
 
     // set the input data for the input tensors
@@ -1416,8 +1428,17 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 if (!buf) continue;
                 int n_total = (int)de->t_barrier[il]->ne[0];
                 while (buf[n_total - 2] == 0) {}
-                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d\n", il, buf[1], buf[2]);
+                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d ids[1]=%d\n", il, buf[1], buf[2], buf[3]);
                 model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
+                // verify: read back slot_map for expert 64 (router selection)
+                {
+                    auto * sm = model.layers[il].ffn_slot_map;
+                    if (sm && sm->data && il < 1 && buf[1] >= 3) {
+                        int32_t sm64; ggml_backend_tensor_get(sm, &sm64, 64*4, 4);
+                        int32_t sm0; ggml_backend_tensor_get(sm, &sm0, 0, 4);
+                        fprintf(stderr, "dyn-ex verify L%d after ensure: slot_map[0]=%d slot_map[64]=%d\n", il, sm0, sm64);
+                    }
+                }
                 buf[n_total - 1] = 1;
                 fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
             }

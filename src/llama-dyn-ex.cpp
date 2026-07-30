@@ -309,11 +309,12 @@ dyn_ex_cache * dyn_ex_cache_init(
     size_t slot_map_bytes = (size_t)n_layers * n_experts * sizeof(int32_t);
     cache->buf_slot_map.reset(ggml_backend_buft_alloc_buffer(buft, slot_map_bytes));
     if (!cache->buf_slot_map) { dyn_ex_cache_free(cache); return nullptr; }
-    // GPU buffer base is a device pointer — must use tensor_set, not memset
     {
         std::vector<uint8_t> init_buf(slot_map_bytes, 0);
         raw_buf_write(cache->buf_slot_map.get(), 0, init_buf.data(), slot_map_bytes);
     }
+
+    // slot_map_host not used (slot_map stays on GPU for performance)
 
     // gate_up slot buffer (or gate + up separately)
     cache->gate_up_stride = align_up(cache->gate_up_expert_size, 256);
@@ -394,6 +395,11 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
     cache->buf_up.reset();
     cache->buf_down.reset();
     cache->buf_slot_map.reset();
+#ifdef GGML_USE_CUDA
+    for (auto * hp : cache->t_barrier_host) {
+        if (hp) cudaFreeHost(hp);
+    }
+#endif
     delete cache;
 }
 
@@ -409,7 +415,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         int s = cache->h_slot_of[layer * cache->n_experts + eid];
         if (s == DYN_EX_SENTINEL) n_unique++;
     }
-    fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
+    //fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
 
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
@@ -506,8 +512,27 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
     if (slot_map_changed && cache->buf_slot_map) {
         size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
         size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
+        fprintf(stderr, "dyn-ex: slot_map sync L%d off=%zu sz=%zu base=%p h[64]=%d\n",
+                layer, layer_byte_off, layer_byte_sz,
+                (void*)ggml_backend_buffer_get_base(cache->buf_slot_map.get()),
+                cache->h_slot_of[layer * n_experts + 64]);
         raw_buf_write(cache->buf_slot_map.get(), layer_byte_off,
                       cache->h_slot_of.data() + layer_off_expert, layer_byte_sz);
+        // readback verify
+        int32_t v0, v64;
+        ggml_tensor dummy;
+        memset(&dummy, 0, sizeof(dummy));
+        dummy.buffer = cache->buf_slot_map.get();
+        dummy.data   = (char*)ggml_backend_buffer_get_base(cache->buf_slot_map.get()) + layer_byte_off;
+        dummy.type   = GGML_TYPE_I32;
+        dummy.ne[0]  = n_experts;
+        dummy.ne[1]  = 1;
+        dummy.ne[2]  = 1;
+        dummy.ne[3]  = 1;
+        dummy.nb[0]  = 4;
+        ggml_backend_tensor_get(&dummy, &v0, 0, 4);
+        ggml_backend_tensor_get(&dummy, &v64, 64*4, 4);
+        fprintf(stderr, "dyn-ex: slot_map readback L%d v0=%d v64=%d\n", layer, v0, v64);
     }
 }
 

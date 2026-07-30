@@ -1934,24 +1934,35 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts, "ffn_moe_topk", il);
 
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr) {
-        // remap expert IDs → slot indices
-        ggml_tensor * se_cpy = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
-        ggml_tensor * se_cont = ggml_cpy(ctx0, selected_experts, se_cpy);
-        ggml_build_forward_expand(gf, se_cont);
-        ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
-        selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
-        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
-        cb(selected_experts_slots, "ffn_moe_slots", il);
-    }
 
-    // barrier: GPU writes expert IDs to pre-allocated cudaHostAllocMapped buffer
+    // barrier: GPU writes expert IDs, CPU loads weights, GPU continues
     if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
+        fprintf(stderr, "dyn-ex graph L%d: barrier added, se=%p bar=%p sm=%p\n", il, (void*)selected_experts, (void*)bar, (void*)slot_map);
+    }
+#endif
+
+    // remap AFTER barrier (slot_map updated by ensure)
+    if (slot_map != nullptr) {
+        // remap: copy to contiguous → flatten → get_rows → reshape → cont
+        ggml_tensor * se_cont = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
+        se_cont = ggml_cpy(ctx0, selected_experts, se_cont);
+        ggml_build_forward_expand(gf, se_cont);
+        ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
+        selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
+        // get_rows output is [1, N, 1, 1] — make contiguous for reshape
+        selected_experts_slots = ggml_cpy(ctx0, selected_experts_slots, 
+            ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0] * selected_experts->ne[1], 1));
+        ggml_build_forward_expand(gf, selected_experts_slots);
+        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
+        selected_experts_slots = ggml_cpy(ctx0, selected_experts_slots,
+            ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]));
+        ggml_build_forward_expand(gf, selected_experts_slots);
+        cb(selected_experts_slots, "ffn_moe_slots", il);
     }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
