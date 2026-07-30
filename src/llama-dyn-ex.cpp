@@ -542,13 +542,11 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
 void dyn_ex_cache_fill(dyn_ex_cache * cache) {
     if (!cache) return;
-    std::vector<int> ids(cache->n_slots);
+    std::vector<int> ids(cache->n_experts);
     for (int l = 0; l < cache->n_layers; l++) {
-        for (int s = 0; s < cache->n_slots; s++) ids[s] = s;
-        dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_slots);
+        for (int e = 0; e < cache->n_experts; e++) ids[e] = e;
+        dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_experts);
     }
-    LLAMA_LOG_INFO("dyn-ex: filled %d layers with %d experts each\n",
-                   cache->n_layers, cache->n_slots);
 }
 
 void dyn_ex_cache_prefetch(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids,

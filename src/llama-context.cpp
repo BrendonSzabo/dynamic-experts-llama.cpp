@@ -1443,6 +1443,20 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         });
     }
 
+    // verify slot_map has no -1 (all experts loaded at startup)
+    if (model.has_dyn_ex()) {
+        for (int il = 0; il < model.hparams.n_layer_all; il++) {
+            auto * sm = model.layers[il].ffn_slot_map;
+            if (!sm || !sm->data) continue;
+            int32_t v0, v100, v200;
+            ggml_backend_tensor_get(sm, &v0, 0, 4);
+            ggml_backend_tensor_get(sm, &v100, 100*4, 4);
+            ggml_backend_tensor_get(sm, &v200, 200*4, 4);
+            if (v0 < 0 || v100 < 0 || v200 < 0) {
+                fprintf(stderr, "dyn-ex BAD slot_map L%d: [0]=%d [100]=%d [200]=%d\n", il, v0, v100, v200);
+            }
+        }
+    }
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
 
     if (barrier_thread.joinable()) barrier_thread.join();
