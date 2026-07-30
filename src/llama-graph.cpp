@@ -1944,7 +1944,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(bar, "ffn_moe_barrier", il);
         fprintf(stderr, "dyn-ex graph L%d: barrier added, se=%p bar=%p sm=%p\n", il, (void*)selected_experts, (void*)bar, (void*)slot_map);
     }
-#endif
 
     // remap AFTER barrier (slot_map updated by ensure)
     if (slot_map != nullptr) {

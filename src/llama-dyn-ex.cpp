@@ -506,6 +506,10 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         cache->h_expert_in[layer_off_slot + slot] = eid;
         cache->h_slot_used[layer_off_slot + slot] = 1;
         slot_map_changed = true;
+        if (eid == 249 && layer == 0) {
+            fprintf(stderr, "dyn-ex ensure L0: loaded eid=249 into slot=%d, h_slot_of[249]=%d\n",
+                    slot, cache->h_slot_of[layer_off_expert + 249]);
+        }
     }
 
     // sync slot_map to GPU
