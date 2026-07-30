@@ -1932,9 +1932,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts, "ffn_moe_topk", il);
 
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr && res != nullptr) {
-        // insert barrier op: GPU copies selected_experts to host buffer,
-        // busy-waits until CPU loads correct expert weights into slots
+    if (slot_map != nullptr && res != nullptr && il >= 0 && (size_t)il < res->dyn_ex_barrier.size() && res->dyn_ex_barrier[il]) {
         ggml_tensor * bar = ggml_dyn_ex_barrier_set(ctx0, selected_experts, res->dyn_ex_barrier[il]);
         cb(bar, "ffn_moe_barrier", il);
     }

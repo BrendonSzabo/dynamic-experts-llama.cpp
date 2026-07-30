@@ -1364,10 +1364,30 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             return nullptr;
         }
 
+        // dyn-ex: save barrier tensor buf/data before scheduler overrides them
+        std::vector<std::pair<ggml_backend_buffer_t, void*>> saved_barriers;
+        if (model.has_dyn_ex()) {
+            auto * de = model.dyn_ex_get_cache();
+            for (auto * t : de->t_barrier) {
+                saved_barriers.push_back({t ? t->buffer : nullptr, t ? t->data : nullptr});
+            }
+        }
+
         if (!ggml_backend_sched_alloc_graph(sched.get(), gf)) {
             LLAMA_LOG_ERROR("%s: failed to allocate graph\n", __func__);
             ret = GGML_STATUS_ALLOC_FAILED;
             return nullptr;
+        }
+
+        // dyn-ex: restore barrier buf/data (scheduler may have changed them)
+        if (model.has_dyn_ex()) {
+            auto * de = model.dyn_ex_get_cache();
+            for (int il = 0; il < (int)de->t_barrier.size() && il < (int)saved_barriers.size(); il++) {
+                if (de->t_barrier[il]) {
+                    de->t_barrier[il]->buffer = saved_barriers[il].first;
+                    de->t_barrier[il]->data   = saved_barriers[il].second;
+                }
+            }
         }
     }
 
@@ -1385,16 +1405,23 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         auto * cache = model.dyn_ex_get_cache();
         int n_layers = (int)cache->t_barrier.size();
         barrier_thread = std::thread([cache, this, n_layers]() {
+            fprintf(stderr, "dyn-ex CPU: barrier thread started, %d layers\n", n_layers);
             for (int il = 0; il < n_layers; il++) {
                 auto * t = cache->t_barrier[il];
                 if (!t) continue;
-                int32_t * buf = (int32_t *)t->data;
-                if (!buf) continue;
                 int n_se = (int)t->ne[0] - 2;
-                while (buf[n_se] == 0) { /* spin */ }
-                model.dyn_ex_ensure_layer(il, buf, n_se);
-                buf[n_se + 1] = 1;
+                int32_t ready = 0;
+                while (ready == 0) {
+                    ggml_backend_tensor_get(t, &ready, n_se * sizeof(int32_t), sizeof(int32_t));
+                }
+                std::vector<int32_t> ids(n_se);
+                ggml_backend_tensor_get(t, ids.data(), 0, n_se * sizeof(int32_t));
+                fprintf(stderr, "dyn-ex CPU: L%d ready, n_se=%d se[0]=%d se[1]=%d\n", il, n_se, ids[0], ids[1]);
+                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
+                int32_t go = 1;
+                ggml_backend_tensor_set(t, &go, (n_se + 1) * sizeof(int32_t), sizeof(int32_t));
             }
+            fprintf(stderr, "dyn-ex CPU: all layers done\n");
         });
     }
 

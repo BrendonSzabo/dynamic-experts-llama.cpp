@@ -763,13 +763,12 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
 }
 
 void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
-    int n_elements = n_expert_used * 4096; // generous max tokens
+    int n_elements = n_expert_used * 4096;
     int64_t total = n_elements + 2;
-    auto * host_buft = ggml_backend_dev_host_buffer_type(dev);
-    if (!host_buft) return;
+    auto * dev_buft = ggml_backend_dev_buffer_type(dev);  // DEVICE buffer type
 
     for (int i = 0; i < n_layers; i++) {
-        auto buf = ggml_backend_buft_alloc_buffer(host_buft, total * sizeof(int32_t));
+        auto buf = ggml_backend_buft_alloc_buffer(dev_buft, total * sizeof(int32_t));
         if (!buf) continue;
         auto * t = new ggml_tensor();
         memset(t, 0, sizeof(ggml_tensor));

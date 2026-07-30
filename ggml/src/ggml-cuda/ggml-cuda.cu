@@ -5436,14 +5436,18 @@ __global__ void dyn_ex_barrier_kernel(
     for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) {
         buf[i] = src[i];
     }
+    __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         buf[n_elements] = 1;
-        __threadfence_system();
+        printf("dyn-ex GPU: barrier ready, spinning on go (n_se=%d, se[0]=%d, se[1]=%d)\n",
+               n_elements, buf[0], buf[1]);
         while (buf[n_elements + 1] == 0) {
             __threadfence_system();
         }
+        printf("dyn-ex GPU: go received, continuing\n");
     }
+    __syncthreads();
 }
 
 static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
