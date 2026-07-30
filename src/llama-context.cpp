@@ -1424,26 +1424,21 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         int n_layers = (int)de->t_barrier_host.size();
         barrier_thread = std::thread([this, de, n_layers]() {
             for (int il = 0; il < n_layers; il++) {
-                int32_t * buf = (int32_t *)de->t_barrier_host[il];
-                if (!buf) continue;
-                int n_total = (int)de->t_barrier[il]->ne[0];
-                while (buf[n_total - 2] == 0) {}
-                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d\n", il, buf[1], buf[2]);
-                model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
-                // verify: compute expected slot indices vs what remap will use
-                if (il == 0) {
-                    auto * sm = model.layers[il].ffn_slot_map;
-                    fprintf(stderr, "dyn-ex L0 expected slots: ");
-                    for (int k = 0; k < buf[1] && k < 8; k++) {
-                        int eid = buf[2 + k];
-                        int32_t sv;
-                        ggml_backend_tensor_get(sm, &sv, eid * 4, 4);
-                        fprintf(stderr, "e%d→s%d ", eid, sv);
-                    }
-                    fprintf(stderr, "\n");
-                }
-                buf[n_total - 1] = 1;
-                fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
+                auto * t = de->t_barrier[il];
+                if (!t || !t->data) continue;
+                int n_total = (int)t->ne[0];
+                int32_t ready = 0;
+                while (ready == 0) ggml_backend_tensor_get(t, &ready, (n_total-2)*4, 4);
+                int32_t n_se = 0;
+                ggml_backend_tensor_get(t, &n_se, 4, 4);
+                std::vector<int32_t> ids(n_se);
+                ggml_backend_tensor_get(t, ids.data(), 8, n_se * 4);
+                fprintf(stderr, "dyn-ex thread: L%d n_se=%d ids[0]=%d\n", il, n_se, n_se>0?ids[0]:-1);
+                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
+                int32_t go = 1;
+#ifdef GGML_USE_CUDA
+                cudaMemcpy((char*)t->data + (n_total-1)*4, &go, 4, cudaMemcpyHostToDevice);
+#endif
             }
         });
     }
