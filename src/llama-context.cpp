@@ -1419,6 +1419,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids[0]=%d\n", il, buf[1], buf[2]);
                 model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
                 buf[n_total - 1] = 1;
+                fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
             }
         });
     }
