@@ -1361,6 +1361,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     cb_func          (params.cb),
     res              (params.res),
     dyn_ex_barrier   (params.dyn_ex_barrier),
+    is_reserve       (params.is_reserve),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
         res->set_params(params);
@@ -1933,13 +1934,25 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts, "ffn_moe_topk", il);
 
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size()) {
-        // create barrier tensor — scheduler allocates buffer
+    if (slot_map != nullptr) {
+        // remap expert IDs → slot indices
+        ggml_tensor * se_cpy = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
+        ggml_tensor * se_cont = ggml_cpy(ctx0, selected_experts, se_cpy);
+        ggml_build_forward_expand(gf, se_cont);
+        ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
+        selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
+        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
+        cb(selected_experts_slots, "ffn_moe_slots", il);
+    }
+
+    // barrier: GPU writes expert IDs, CPU loads weights, GPU continues
+    if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size()) {
         int64_t n_elements = selected_experts->ne[0] * selected_experts->ne[1];
         ggml_tensor * bar = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_elements + 2, 1);
         ggml_set_name(bar, "dyn_ex_barrier");
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
+        ggml_build_forward_expand(gf, bar);
         (*dyn_ex_barrier)[il] = bar;
         cb(bar, "ffn_moe_barrier", il);
     }

@@ -712,6 +712,7 @@ struct llm_graph_params {
     llm_graph_result * res;
 
     std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
+    bool is_reserve = false;
 
     // return true if the "other" params would result in a graph with the same topology as with the current params
     //   having the same topology allows us to reuse the graph in some cases
@@ -939,6 +940,7 @@ struct llm_graph_context {
     llm_graph_result * res;
 
     std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
+    bool is_reserve = false;
 
     ggml_context * ctx0 = nullptr;
     ggml_cgraph  * gf   = nullptr;

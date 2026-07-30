@@ -1331,7 +1331,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
     // the new graph parameters
     // in order to correctly reuse a graph, it's full topology has to be uniquely determined by these parameters
-    const auto gparams = graph_params(res, ubatch, mctx, gtype);
+    auto gparams = graph_params(res, ubatch, mctx, gtype);
 
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
@@ -1408,12 +1408,23 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     // dyn-ex: barrier thread polls ready flag, loads experts, sets go
     std::thread barrier_thread;
     if (model.has_dyn_ex()) {
-        auto * de = model.dyn_ex_get_cache();
-        int n_layers = (int)de->t_barrier.size();
-        barrier_thread = std::thread([res, this, n_layers]() {
+        // find barrier tensors in graph (set during build, survive reuse)
+        std::vector<ggml_tensor *> barriers;
+        ggml_cgraph * gf = res->get_gf();
+        int n_barrier = 0, n_other = 0;
+        for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
+            ggml_tensor * t = ggml_graph_node(gf, i);
+            if (t->op == GGML_OP_DYN_EX_BARRIER) { barriers.push_back(t); n_barrier++; }
+            else if (strncmp(ggml_get_name(t), "dyn_ex_barrier", 13) == 0) n_barrier++;
+            else n_other++;
+        }
+        fprintf(stderr, "dyn-ex thread: total nodes=%d barriers=%d other=%d\n", ggml_graph_n_nodes(gf), n_barrier, n_other);
+        int n_layers = (int)barriers.size();
+        fprintf(stderr, "dyn-ex thread: found %d barriers in graph\n", n_layers);
+        barrier_thread = std::thread([this, barriers = std::move(barriers), n_layers]() {
             fprintf(stderr, "dyn-ex thread: started\n");
             for (int il = 0; il < n_layers; il++) {
-                auto * t = res->dyn_ex_barrier[il]; // scheduler's tensor (correct ne)
+                auto * t = barriers[il];
                 if (!t || !t->data) { fprintf(stderr, "dyn-ex thread: L%d null\n", il); continue; }
                 int n_total = (int)t->ne[0];
                 fprintf(stderr, "dyn-ex thread: L%d polling ready n_tot=%d\n", il, n_total);
@@ -2455,7 +2466,8 @@ ggml_cgraph * llama_context::graph_reserve(
 
     auto * res = gf_res_reserve.get();
 
-    const auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
+    auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
+    gparams.is_reserve = true;
 
     res->reset();
 
@@ -2500,7 +2512,7 @@ llm_graph_params llama_context::graph_params(
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
-        /*.dyn_ex_barrier =*/ model.has_dyn_ex() ? &model.dyn_ex_get_cache()->t_barrier : nullptr,
+        /*.dyn_ex_barrier =*/ gtype == LLM_GRAPH_TYPE_DEFAULT && model.has_dyn_ex() ? &model.dyn_ex_get_cache()->t_barrier : nullptr,
     };
     fprintf(stderr, "graph_params: dyn_ex_barrier=%p has_dyn=%d\n",
         (void*)(model.has_dyn_ex() ? &model.dyn_ex_get_cache()->t_barrier : nullptr),
@@ -3439,7 +3451,7 @@ void llama_context::opt_epoch_iter(
 
             auto * res = gf_res_prev.get();
 
-            const auto gparams = graph_params(res, ubatch, mctx.get(), ctx_type_to_graph_type(cparams.ctx_type));
+            auto gparams = graph_params(res, ubatch, mctx.get(), ctx_type_to_graph_type(cparams.ctx_type));
 
             res->reset();
 
