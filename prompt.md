@@ -279,3 +279,79 @@ Prefer conditional compilation (`#ifdef LLAMA_DYN_EX`) or runtime feature flags 
 - `common/common.h` — common params
 - `common/arg.cpp` — CLI args
 - `common/common.cpp` — params wiring
+
+---
+
+## Current Status (2026-07-30)
+
+### Working
+- **Model loading**: expert weight tensors skipped in `load_all_data()` via `strstr(name, "_exps.")` check
+- **.bin reader**: VLLM\x02 format reader/writer, converter script
+- **Slot cache**: GPU buffers created per weight type (gate_up, gate, up, down), per-layer slot tensors replace original `llama_layer` expert pointers
+- **Slot data verified byte-per-byte**: `dyn_ex_cache_fill` loads correct expert weights from .bin into slots
+- **Slot tensor buffers confirmed unchanged**: scheduler does NOT reallocate pre-allocated slot buffers during `sched_alloc_graph`
+- **Async prefetch infra**: CUDA stream, events, staging buffers, `prefetch()` / `wait()` functions
+- **CPU predictor**: V6Model architecture, AdamW training, DXP2 binary format save/load
+- **CLI args**: `--dyn-ex`, `--dyn-ex-l1`, `--dyn-ex-predictor` wired through to model params
+- **All 47 model archs**: `ffn_slot_map` passed to `build_moe_ffn`
+- **GGML_OP_DYN_EX_BARRIER**: custom ggml op with CUDA spin-wait kernel + CPU memcpy handler
+- **Scheduler group-break**: `ggml-backend.cpp` breaks compute groups at `DYN_EX_BARRIER` nodes
+- **Model loads and runs inference**: without crash on basic path
+
+### BLOCKING: NaN in softmax during inference
+- NaN assertion fires in `ggml_compute_forward_soft_max_f32` (CPU backend)
+- Happens during **attention softmax**, BEFORE any MoE computation
+- Model works without `--dyn-ex` (confirmed) but doesn't fit in VRAM (18GB needed)
+- With `--dyn-ex`, expert weights skipped → model fits, but NaN in attention
+- **Hypothesis**: `load_all_data()` skip might accidentally skip non-expert tensors (attention weights, embeddings, norms, etc.) — the `strstr` pattern `"_exps."` should only match MoE expert tensors, but needs verification
+
+### What's NOT the issue
+- **Scheduler buffer reallocation**: Confirmed slot tensor buffers unchanged after `sched_alloc_graph`
+- **Expert data corruption**: Verified byte-per-byte match between .bin source and slot tensor
+- **Barrier/busy-wait approach**: Thread starts and waits for ready flag — confirmed working
+- **Eval callback approach**: Fires but barrier nodes don't reach compute splits (scheduler grouping issue)
+
+### Architecture decisions
+- **Barrier thread + CUDA spin-wait**: chosen over eval callback (simpler, no scheduler fighting)
+- **ggml_op_is_empty**: DYN_EX_BARRIER REMOVED from empty ops — dispatches to all backends
+- **Barrier buffer type**: Device buffer (not host-visible) — matches scheduler split type
+- **Barrier read**: Thread reads from `res->dyn_ex_barrier[il]` (graph copy, not cache copy)
+
+---
+
+## Next Step: Deep Dive into load_all_data Skip
+
+Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NOT accidentally skip:
+- `token_embd.weight` (embeddings)
+- `blk.N.attn_q.weight` (attention Q)
+- `blk.N.attn_k.weight` (attention K)  
+- `blk.N.attn_v.weight` (attention V)
+- `blk.N.attn_output.weight` (attention output)
+- `blk.N.ffn_norm.weight` (layer norms)
+- `output.weight` (LM head)
+- Any tensor with `_exps_` or `_exps.` as a false positive
+
+**Debug approach**: add logging to `load_all_data()` to print EVERY tensor name that is skipped. Verify the skip list contains ONLY expert tensors.
+
+---
+
+## Lessons Learned
+
+### Always use logging
+When debugging, add fprintf(stderr, ...) at every step. Never guess the flow. This session wasted hours on:
+- Believing scheduler reallocated buffers (it doesn't)
+- Believing callback fired for barrier nodes (it doesn't reach splits)
+- Believing two-pass could work (layer dependency makes it wrong for token 1)
+- Believing the barrier thread vs graph buffer mismatch was the issue (it was, for the thread reading cache tensors)
+
+### Always commit
+Commit small, commit often. Every working piece of infrastructure should be committed before moving to the next.
+
+### The predictor is best-effort, not source of truth
+The graph's `ggml_argsort_top_k` is the actual expert selection. The MLP predictor is an optimization for prefetching — it guesses, the graph decides. Never use predictor output as `selected_experts_in`.
+
+### Two-pass doesn't work for first token
+Layer N's router depends on layer N-1's correct expert output. Pass 1's stale experts produce wrong hidden states → wrong router decisions for layers 1+. The only correct approaches:
+1. n_slots = n_experts (all experts fit, no staleness)
+2. Barrier/callback in graph between router and matmul (current approach)
+3. Custom ggml op that loads experts on-demand during compute
