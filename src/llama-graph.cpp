@@ -1942,20 +1942,22 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         bar->src[0] = selected_experts;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
-        fprintf(stderr, "dyn-ex graph L%d: barrier added, se=%p bar=%p sm=%p\n", il, (void*)selected_experts, (void*)bar, (void*)slot_map);
+        // make remap depend on barrier: read selected_experts from bar output
+        selected_experts = ggml_view_2d(ctx0, bar, selected_experts->ne[0], selected_experts->ne[1],
+                                         sizeof(int32_t) * selected_experts->ne[0], 2 * sizeof(int32_t));
     }
 
     // remap AFTER barrier (slot_map updated by ensure)
     if (slot_map != nullptr) {
-        // remap: copy to contiguous → flatten → get_rows → reshape → cont
         ggml_tensor * se_cont = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
         se_cont = ggml_cpy(ctx0, selected_experts, se_cont);
         ggml_build_forward_expand(gf, se_cont);
         ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
         selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
-        // reshape to match batch: use actual n_tokens, not selected_experts->ne[1] (may be stale on graph reuse)
-        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], n_tokens);
-        selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
+        // create fresh tensor with correct dimensions (reshape ne can be stale on graph reuse)
+        ggml_tensor * se_fresh = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], n_tokens);
+        selected_experts_slots = ggml_cpy(ctx0, selected_experts_slots, se_fresh);
+        ggml_build_forward_expand(gf, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
         fprintf(stderr, "dyn-ex remap L%d: slots.nb=[%zu,%zu] slots.ne=[%lld,%lld] gate.nb=[%zu,%zu,%zu] gate.ne=[%lld,%lld,%lld]\n",
             il, selected_experts_slots->nb[0], selected_experts_slots->nb[1],
