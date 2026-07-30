@@ -227,9 +227,21 @@ void ggml_cuda_mul_mat_q(
                                         ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
             }
         } else if (dedup_bcast) {
+            fprintf(stderr, "dyn-ex mmq scatter: ids_src1=%p ne_get_rows=%lld\n",
+                (void*)ids_src1.get(), (long long)ne_get_rows);
+            // check first few ids values
+            {
+                std::vector<int32_t> tmp((size_t)std::min(ne_get_rows, (int64_t)8));
+                CUDA_CHECK(cudaMemcpy(tmp.data(), ids_src1.get(), tmp.size()*4, cudaMemcpyDeviceToHost));
+                fprintf(stderr, "dyn-ex mmq scatter ids[0..7]=");
+                for (size_t j = 0; j < tmp.size(); j++) fprintf(stderr, "%d ", tmp[j]);
+                fprintf(stderr, "\n");
+            }
             quantize_scatter_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10,
                                     /*stride_token=*/s12, ne10_padded, ne12, ne11_flat, n_expert_used, stream);
         } else {
+            fprintf(stderr, "dyn-ex mmq quantize: ids->data=%p ids_src1=%p ne_get_rows=%lld\n",
+                (void*)ids->data, (void*)ids_src1.get(), (long long)ne_get_rows);
             quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         }

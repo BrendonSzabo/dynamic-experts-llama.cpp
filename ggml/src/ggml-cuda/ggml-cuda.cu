@@ -5462,9 +5462,10 @@ __global__ void dyn_ex_barrier_kernel(
     __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
+        printf("dyn-ex GPU barrier: running, n_e=%d n_tot=%d\n", n_elements, n_total);
         buf[n_total - 2] = 1;
-        __threadfence_system();
         while (buf[n_total - 1] == 0) { __threadfence_system(); }
+        printf("dyn-ex GPU barrier: go!\n");
     }
     __syncthreads();
 }

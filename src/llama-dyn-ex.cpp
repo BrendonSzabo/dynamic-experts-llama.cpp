@@ -304,6 +304,8 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->h_slot_used.assign((size_t)n_layers * n_slots, 0);
 
     // create GPU buffers using scheduler's CUDA buft
+    fprintf(stderr, "dyn-ex init: buft=%p dev=%p\n", (void*)buft, (void*)dev);
+    fflush(stderr);
     (void)dev;
 
     // slot_map buffer: [n_layers * n_expert] int32
@@ -515,6 +517,11 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
     // sync slot_map to GPU
     if (slot_map_changed && cache->buf_slot_map) {
+        fprintf(stderr, "dyn-ex sync slot_map L%d: h[0]=%d h[8]=%d h[64]=%d\n",
+            layer, cache->h_slot_of[layer * cache->n_experts + 0],
+            cache->h_slot_of[layer * cache->n_experts + 8],
+            cache->h_slot_of[layer * cache->n_experts + 64]);
+        fflush(stderr);
         size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
         size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
         if(0)fprintf(stderr, "dyn-ex: slot_map sync L%d off=%zu sz=%zu base=%p h[64]=%d\n",
@@ -543,11 +550,13 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
 void dyn_ex_cache_fill(dyn_ex_cache * cache) {
     if (!cache) return;
-    std::vector<int> ids(cache->n_experts);
+    std::vector<int> ids(cache->n_slots);
     for (int l = 0; l < cache->n_layers; l++) {
-        for (int e = 0; e < cache->n_experts; e++) ids[e] = e;
-        dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_experts);
+        for (int s = 0; s < cache->n_slots; s++) ids[s] = s;
+        dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_slots);
     }
+    LLAMA_LOG_INFO("dyn-ex: filled %d layers with %d experts each\n",
+                   cache->n_layers, cache->n_slots);
 }
 
 void dyn_ex_cache_prefetch(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids,
