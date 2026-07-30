@@ -1105,6 +1105,14 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             return nullptr;
         }
 
+        // dyn-ex: skip expert weight tensors (GGML_OP_MUL_MAT_ID — loaded from .bin)
+        if (info.op == GGML_OP_MUL_MAT_ID) {
+            const size_t nbytes = ggml_nbytes(t_meta);
+            size_data -= nbytes;
+            n_created++;
+            return nullptr;
+        }
+
         // tensors with "bias" suffix are always used with GGML_OP_ADD or GGML_OP_ADD_ID
         ggml_op op;
         bool bias = tn.suffix != nullptr && strcmp(tn.suffix, "bias") == 0;
@@ -1526,7 +1534,7 @@ bool llama_model_loader::load_all_data(
             const char * tname = ggml_get_name(cur);
             if (strstr(tname, "_exps.") || strstr(tname, "_exps_")) {
                 size_t n_size = ggml_nbytes(cur);
-                size_done += n_size; // treat as loaded for accurate progress
+                size_done += n_size;
                 continue;
             }
         }

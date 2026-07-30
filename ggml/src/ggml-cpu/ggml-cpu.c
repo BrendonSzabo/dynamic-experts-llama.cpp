@@ -2035,7 +2035,16 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_DYN_EX_BARRIER:
             {
                 struct ggml_tensor * src = tensor->src[0];
-                memcpy(tensor->data, src->data, ggml_nbytes(src));
+                int n_elements = (int)(src->ne[0] * src->ne[1]);
+                int32_t * buf = (int32_t *)tensor->data;
+                int n_total = (int)tensor->ne[0];
+                fprintf(stderr, "dyn-ex CPU: copy n_e=%d n_tot=%d\n", n_elements, n_total);
+                buf[1] = n_elements;
+                memcpy(buf + 2, src->data, n_elements * sizeof(int32_t));
+                buf[n_total - 2] = 1;
+                fprintf(stderr, "dyn-ex CPU: ready set, spinning\n");
+                while (buf[n_total - 1] == 0) { /* spin */ }
+                fprintf(stderr, "dyn-ex CPU: go!\n");
             } break;
         case GGML_OP_GET_REL_POS:
             {

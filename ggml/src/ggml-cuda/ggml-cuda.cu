@@ -5432,10 +5432,25 @@ GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)
 __global__ void dyn_ex_barrier_kernel(
     int32_t * __restrict__ buf,
     const int32_t * __restrict__ src,
-    int n_elements) {
+    int n_elements,
+    int n_total) {
+    buf[1] = n_elements; // actual count
     for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) {
-        buf[i] = src[i];
+        buf[2 + i] = src[i];
     }
+    __threadfence_system();
+    __syncthreads();
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        buf[n_total - 2] = 1; // ready
+        printf("dyn-ex GPU: ready n_e=%d n_tot=%d\n", n_elements, n_total);
+        __threadfence_system();
+        printf("dyn-ex GPU: spinning on go\n");
+        while (buf[n_total - 1] == 0) {
+            __threadfence_system();
+        }
+        printf("dyn-ex GPU: go!\n");
+    }
+    __syncthreads();
 }
 
 static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -5443,7 +5458,8 @@ static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_te
     int32_t * buf_d = (int32_t *)dst->data;
     const int32_t * src_d = (const int32_t *)src->data;
     int n_elements = (int)(src->ne[0] * src->ne[1]);
-    int threads = std::min(n_elements, 256);
-    int blocks = (n_elements + threads - 1) / threads;
-    dyn_ex_barrier_kernel<<<blocks, threads, 0, ctx.stream()>>>(buf_d, src_d, n_elements);
+    int n_total    = (int)dst->ne[0];
+    int threads = std::min(n_elements + 1, 256);
+    int blocks = (n_elements + threads) / threads;
+    dyn_ex_barrier_kernel<<<blocks, threads, 0, ctx.stream()>>>(buf_d, src_d, n_elements, n_total);
 }

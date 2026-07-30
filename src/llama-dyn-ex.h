@@ -111,6 +111,7 @@ struct dyn_ex_cache {
     std::vector<ggml_tensor *>           t_se_capture;   // [n_layers] I32, [n_expert_used, n_tokens]
     std::vector<ggml_backend_buffer_ptr> buf_barrier; // per-layer barrier buffers (host-visible)
     std::vector<ggml_tensor *>           t_barrier;   // per-layer barrier tensors
+    std::vector<void *>                  t_barrier_host; // host pointers for CPU access
 
     size_t gate_up_stride = 0; // bytes per slot in gate_up buffer (aligned)
     size_t gate_stride    = 0; // bytes per slot in gate buffer (separate, aligned)

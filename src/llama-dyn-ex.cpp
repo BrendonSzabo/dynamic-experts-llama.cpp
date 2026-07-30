@@ -1,6 +1,10 @@
 #include "llama-dyn-ex.h"
 #include "llama-impl.h"
 
+#ifdef GGML_USE_CUDA
+#include <cuda_runtime_api.h>
+#endif
+
 #include <algorithm>
 #include <cstring>
 #include <cerrno>
@@ -247,7 +251,6 @@ dyn_ex_cache * dyn_ex_cache_init(
     ggml_tensor * expert_down) {
 
     if (!reader || n_slots < 1 || !dev) return nullptr;
-    if (!expert_down) return nullptr;
 
     // validate n_slots is power of 2
     if ((n_slots & (n_slots - 1)) != 0) {
@@ -397,6 +400,16 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
 void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
     if (!expert_ids || n_ids <= 0) return;
+
+    // count unique experts
+    int n_unique = 0, n_loaded = 0;
+    for (int i = 0; i < n_ids; i++) {
+        int eid = expert_ids[i];
+        if (eid < 0 || eid >= cache->n_experts) continue;
+        int s = cache->h_slot_of[layer * cache->n_experts + eid];
+        if (s == DYN_EX_SENTINEL) n_unique++;
+    }
+    fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
 
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
@@ -764,20 +777,6 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
 }
 
 void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
-    int n_elements = n_expert_used * 4096;
-    int64_t total = n_elements + 2;
-    auto * dev_buft = ggml_backend_dev_buffer_type(dev);  // DEVICE buffer type
-
-    for (int i = 0; i < n_layers; i++) {
-        auto buf = ggml_backend_buft_alloc_buffer(dev_buft, total * sizeof(int32_t));
-        if (!buf) continue;
-        auto * t = new ggml_tensor();
-        memset(t, 0, sizeof(ggml_tensor));
-        t->type = GGML_TYPE_I32;
-        t->ne[0] = total; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
-        t->nb[0] = sizeof(int32_t); t->nb[1] = sizeof(int32_t) * total; t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
-        ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
-        cache->buf_barrier.push_back(ggml_backend_buffer_ptr(buf));
-        cache->t_barrier.push_back(t);
-    }
+    // barriers allocated by scheduler during graph build — just reserve slots
+    cache->t_barrier.resize(n_layers, nullptr);
 }

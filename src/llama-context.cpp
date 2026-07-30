@@ -2,6 +2,9 @@
 
 #include "ggml.h"
 #include <thread>
+#ifdef GGML_USE_CUDA
+#include <cuda_runtime_api.h>
+#endif
 #include "llama-arch.h"
 #include "llama-dyn-ex.h"
 #include "llama-graph.h"
@@ -596,25 +599,6 @@ void llama_context::sched_reserve() {
     gf_res_reserve.reset(new llm_graph_result(max_nodes));
 
     sched.reset(ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), max_nodes, cparams.pipeline_parallel, cparams.op_offload));
-
-    // dyn-ex: register eval callback immediately after scheduler creation
-    if (model.has_dyn_ex()) {
-        ggml_backend_sched_set_eval_callback(sched.get(), [](ggml_tensor * t, bool ask, void * user_data) -> bool {
-            auto * m = (const llama_model *)user_data;
-            if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
-            if (!m->has_dyn_ex()) return false;
-            if (ask) { fprintf(stderr, "dyn-ex cb: sync L?\n"); return true; }
-            ggml_tensor * src = t->src[0];
-            int n_se = (int)(src->ne[0] * src->ne[1]);
-            std::vector<int32_t> ids(n_se);
-            ggml_backend_tensor_get(t, ids.data(), 0, n_se * sizeof(int32_t));
-            const char * name = ggml_get_name(t); int il = 0;
-            if (strncmp(name, "dyn_ex_barrier_", 15) == 0) il = atoi(name + 15);
-            m->dyn_ex_ensure_layer(il, ids.data(), n_se);
-            fprintf(stderr, "dyn-ex cb: L%d loaded %d experts\n", il, n_se);
-            return true;
-        }, (void*)&model);
-    }
 
     llama_memory_context_ptr mctx;
     if (memory) {
@@ -1410,6 +1394,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 t->data   = slot_saved[il].second;
             }
         }
+
     }
 
     // set the input data for the input tensors
@@ -1420,28 +1405,41 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     }
 
 
-    // dyn-ex: register eval callback (must be set before every compute, not just rebuild)
+    // dyn-ex: barrier thread polls ready flag, loads experts, sets go
+    std::thread barrier_thread;
     if (model.has_dyn_ex()) {
-        ggml_backend_sched_set_eval_callback(sched.get(), [](ggml_tensor * t, bool ask, void * user_data) -> bool {
-            if (ask) fprintf(stderr, "dyn-ex cb: op=%d ask=1 name=%s\n", t->op, ggml_get_name(t));
-            if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
-            auto * model = (const llama_model *)user_data;
-            if (!model->has_dyn_ex()) return false;
-            if (ask) { fprintf(stderr, "dyn-ex cb: sync barrier\n"); return true; }
-            ggml_tensor * src = t->src[0];
-            int n_se = (int)(src->ne[0] * src->ne[1]);
-            std::vector<int32_t> ids(n_se);
-            ggml_backend_tensor_get(t, ids.data(), 0, n_se * sizeof(int32_t));
-            fprintf(stderr, "dyn-ex cb: loaded n_se=%d ids[0]=%d\n", n_se, ids[0]);
-            const char * name = ggml_get_name(t);
-            int il = 0;
-            if (strncmp(name, "dyn_ex_barrier_", 15) == 0) il = atoi(name + 15);
-            model->dyn_ex_ensure_layer(il, ids.data(), n_se);
-            return true;
-        }, (void*)&model);
+        auto * de = model.dyn_ex_get_cache();
+        int n_layers = (int)de->t_barrier.size();
+        barrier_thread = std::thread([res, this, n_layers]() {
+            fprintf(stderr, "dyn-ex thread: started\n");
+            for (int il = 0; il < n_layers; il++) {
+                auto * t = res->dyn_ex_barrier[il]; // scheduler's tensor (correct ne)
+                if (!t || !t->data) { fprintf(stderr, "dyn-ex thread: L%d null\n", il); continue; }
+                int n_total = (int)t->ne[0];
+                fprintf(stderr, "dyn-ex thread: L%d polling ready n_tot=%d\n", il, n_total);
+                int32_t ready = 0;
+                while (ready == 0) {
+                    ggml_backend_tensor_get(t, &ready, (n_total - 2) * sizeof(int32_t), sizeof(int32_t));
+                }
+                int32_t n_se = 0;
+                ggml_backend_tensor_get(t, &n_se, 1 * sizeof(int32_t), sizeof(int32_t));
+                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d\n", il, n_se);
+                std::vector<int32_t> ids(n_se);
+                ggml_backend_tensor_get(t, ids.data(), 2 * sizeof(int32_t), n_se * sizeof(int32_t));
+                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
+                int32_t go = 1;
+                ggml_backend_tensor_set(t, &go, (n_total - 1) * sizeof(int32_t), sizeof(int32_t));
+#ifdef GGML_USE_CUDA
+                cudaDeviceSynchronize(); // flush async set so GPU spin sees it
+#endif
+                fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
+            }
+        });
     }
 
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
+
+    if (barrier_thread.joinable()) barrier_thread.join();
 
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);

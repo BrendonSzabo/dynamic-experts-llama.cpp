@@ -1574,31 +1574,23 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
 
         // grab original expert tensor metadata from first MoE layer
-        ggml_tensor * orig_gate_up = nullptr;
-        ggml_tensor * orig_gate    = nullptr;
-        ggml_tensor * orig_up      = nullptr;
-        ggml_tensor * orig_down    = nullptr;
-        for (int il = 0; il < n_layer_all; il++) {
-            if (layers[il].ffn_gate_up_exps) { orig_gate_up = layers[il].ffn_gate_up_exps; break; }
-            if (layers[il].ffn_gate_exps)    { orig_gate    = layers[il].ffn_gate_exps;    }
-            if (layers[il].ffn_up_exps)      { orig_up      = layers[il].ffn_up_exps;      }
-            if (layers[il].ffn_down_exps)    { orig_down    = layers[il].ffn_down_exps;    break; }
-        }
-
         pimpl->dyn_ex = dyn_ex_cache_init(
             reader, params.dyn_ex_n_slots, gpu_dev,
-            orig_gate_up, orig_gate, orig_up, orig_down);
+            nullptr, nullptr, nullptr, nullptr);
         if (!pimpl->dyn_ex) {
             dyn_ex_reader_close(reader);
             throw std::runtime_error("dyn-ex: cache init failed");
         }
 
         int n_slots = params.dyn_ex_n_slots;
-        auto make_slot_tensor = [&](int il, ggml_tensor * orig, ggml_backend_buffer_ptr & slot_buf, size_t expert_size) -> ggml_tensor * {
-            if (!orig || !slot_buf) return nullptr;
-            ggml_type type  = orig->type;
-            int64_t   ne0   = orig->ne[0];
-            int64_t   ne1   = orig->ne[1];
+        auto * de = pimpl->dyn_ex;
+        auto make_slot_tensor = [&](int il, int pi, ggml_backend_buffer_ptr & slot_buf, size_t expert_size) -> ggml_tensor * {
+            if (!slot_buf || pi < 0) return nullptr;
+            auto & ps = de->reader->params[pi];
+            ggml_type type  = ps.type;
+            int64_t   ne0   = ps.ndim >= 1 ? ps.shape[0] : 0;
+            int64_t   ne1   = ps.ndim >= 2 ? ps.shape[1] : 0;
+            if (!ne0 || !ne1) return nullptr;
             size_t slot_stride = ((expert_size + 255) / 256) * 256;
             size_t offset      = (size_t)il * n_slots * slot_stride;
 
@@ -1609,13 +1601,13 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             t->ne[1] = ne1;
             t->ne[2] = n_slots;
             t->ne[3] = 1;
-            t->nb[0] = orig->nb[0];
-            t->nb[1] = orig->nb[1];
-            t->nb[2] = orig->nb[1] * ne1;
+            size_t blck = ggml_blck_size(type);
+            t->nb[0] = ggml_type_size(type);
+            t->nb[1] = t->nb[0] * (ne0 / blck);
+            t->nb[2] = t->nb[1] * ne1;
             t->nb[3] = t->nb[2] * n_slots;
 
             ggml_backend_tensor_alloc(slot_buf.get(), t, (char *)ggml_backend_buffer_get_base(slot_buf.get()) + offset);
-            ggml_format_name(t, "blk.%d.%s_slots", il, ggml_get_name(orig));
             return t;
         };
 
@@ -1623,8 +1615,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             auto & layer = layers[il];
 
             bool is_moe = layer.ffn_gate_up_exps || layer.ffn_down_exps;
-            if (!is_moe) continue;
-
             layer.ffn_slot_map = new ggml_tensor();
             memset(layer.ffn_slot_map, 0, sizeof(ggml_tensor));
             layer.ffn_slot_map->type   = GGML_TYPE_I32;
@@ -1640,13 +1630,13 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             ggml_backend_tensor_alloc(pimpl->dyn_ex->buf_slot_map.get(), layer.ffn_slot_map,
                 (char *)ggml_backend_buffer_get_base(pimpl->dyn_ex->buf_slot_map.get()) + sm_offset);
 
-            layer.ffn_gate_up_exps = make_slot_tensor(il, layer.ffn_gate_up_exps,
+            layer.ffn_gate_up_exps = make_slot_tensor(il, de->pi_gate_up,
                 pimpl->dyn_ex->buf_gate_up, pimpl->dyn_ex->gate_up_expert_size);
-            layer.ffn_gate_exps = make_slot_tensor(il, layer.ffn_gate_exps,
+            layer.ffn_gate_exps = make_slot_tensor(il, de->pi_gate,
                 pimpl->dyn_ex->buf_gate, pimpl->dyn_ex->gate_expert_size);
-            layer.ffn_up_exps = make_slot_tensor(il, layer.ffn_up_exps,
+            layer.ffn_up_exps = make_slot_tensor(il, de->pi_up,
                 pimpl->dyn_ex->buf_up, pimpl->dyn_ex->up_expert_size);
-            layer.ffn_down_exps = make_slot_tensor(il, layer.ffn_down_exps,
+            layer.ffn_down_exps = make_slot_tensor(il, de->pi_down,
                 pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
 
             pimpl->dyn_ex->t_gate_up[il] = layer.ffn_gate_up_exps;

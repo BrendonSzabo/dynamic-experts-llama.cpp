@@ -1933,9 +1933,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts, "ffn_moe_topk", il);
 
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
-        fprintf(stderr, "dyn-ex: adding barrier node for L%d\n", il);
-        ggml_tensor * bar = ggml_dyn_ex_barrier_set(ctx0, selected_experts, (*dyn_ex_barrier)[il]);
+    if (slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size()) {
+        // create barrier tensor — scheduler allocates buffer
+        int64_t n_elements = selected_experts->ne[0] * selected_experts->ne[1];
+        ggml_tensor * bar = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_elements + 2, 1);
+        ggml_set_name(bar, "dyn_ex_barrier");
+        bar->op = GGML_OP_DYN_EX_BARRIER;
+        bar->src[0] = selected_experts;
+        (*dyn_ex_barrier)[il] = bar;
         cb(bar, "ffn_moe_barrier", il);
     }
 

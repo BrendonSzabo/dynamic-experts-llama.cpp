@@ -341,7 +341,7 @@ Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NO
 When debugging, add fprintf(stderr, ...) at every step. Never guess the flow. This session wasted hours on:
 - Believing scheduler reallocated buffers (it doesn't)
 - Believing callback fired for barrier nodes (it doesn't reach splits)
-- Believing two-pass could work (layer dependency makes it wrong for token 1)
+- Believing two-pass could work (It doesn't because it wastes too much compute and is inherently a flawed idea)
 - Believing the barrier thread vs graph buffer mismatch was the issue (it was, for the thread reading cache tensors)
 
 ### Always commit
@@ -350,8 +350,5 @@ Commit small, commit often. Every working piece of infrastructure should be comm
 ### The predictor is best-effort, not source of truth
 The graph's `ggml_argsort_top_k` is the actual expert selection. The MLP predictor is an optimization for prefetching — it guesses, the graph decides. Never use predictor output as `selected_experts_in`.
 
-### Two-pass doesn't work for first token
-Layer N's router depends on layer N-1's correct expert output. Pass 1's stale experts produce wrong hidden states → wrong router decisions for layers 1+. The only correct approaches:
-1. n_slots = n_experts (all experts fit, no staleness)
-2. Barrier/callback in graph between router and matmul (current approach)
-3. Custom ggml op that loads experts on-demand during compute
+### Two-pass doesn't work
+We cannot say for sure what experts the next layer will need and running the same layer twice wastes insane amounts of compute.
