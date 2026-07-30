@@ -1360,6 +1360,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     samplers         (params.samplers),
     cb_func          (params.cb),
     res              (params.res),
+    dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
         res->set_params(params);
@@ -1932,8 +1933,9 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     cb(selected_experts, "ffn_moe_topk", il);
 
     ggml_tensor * selected_experts_slots = selected_experts;
-    if (slot_map != nullptr && res != nullptr && il >= 0 && (size_t)il < res->dyn_ex_barrier.size() && res->dyn_ex_barrier[il]) {
-        ggml_tensor * bar = ggml_dyn_ex_barrier_set(ctx0, selected_experts, res->dyn_ex_barrier[il]);
+    if (slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
+        fprintf(stderr, "dyn-ex: adding barrier node for L%d\n", il);
+        ggml_tensor * bar = ggml_dyn_ex_barrier_set(ctx0, selected_experts, (*dyn_ex_barrier)[il]);
         cb(bar, "ffn_moe_barrier", il);
     }
 

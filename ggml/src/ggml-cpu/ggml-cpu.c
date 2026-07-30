@@ -2032,6 +2032,11 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_glu(params, tensor);
             } break;
+        case GGML_OP_DYN_EX_BARRIER:
+            {
+                struct ggml_tensor * src = tensor->src[0];
+                memcpy(tensor->data, src->data, ggml_nbytes(src));
+            } break;
         case GGML_OP_GET_REL_POS:
             {
                 ggml_compute_forward_get_rel_pos(params, tensor);

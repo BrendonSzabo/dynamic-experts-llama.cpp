@@ -94,7 +94,6 @@ static bool ggml_op_is_empty(enum ggml_op op) {
         case GGML_OP_TRANSPOSE:
         case GGML_OP_VIEW:
         case GGML_OP_PERMUTE:
-        case GGML_OP_DYN_EX_BARRIER:
             return true;
         default:
             return false;

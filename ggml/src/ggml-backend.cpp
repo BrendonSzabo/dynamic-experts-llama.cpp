@@ -1701,6 +1701,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 // determine the range [j0, j1] of nodes that can be computed together
                 while (!need && j1 < split->graph.n_nodes - 1) {
                     t = split->graph.nodes[++j1];
+                    if (t->op == GGML_OP_DYN_EX_BARRIER) { j1--; break; }
                     need = sched->callback_eval(t, true, sched->callback_eval_user_data);
                 }
 
