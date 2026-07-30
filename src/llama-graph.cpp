@@ -1953,7 +1953,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_build_forward_expand(gf, se_cont);
         ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
         selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
-        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], selected_experts->ne[1]);
+        // reshape to match batch: use actual n_tokens, not selected_experts->ne[1] (may be stale on graph reuse)
+        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], n_tokens);
         selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
         fprintf(stderr, "dyn-ex remap L%d: slots.nb=[%zu,%zu] slots.ne=[%lld,%lld] gate.nb=[%zu,%zu,%zu] gate.ne=[%lld,%lld,%lld]\n",
