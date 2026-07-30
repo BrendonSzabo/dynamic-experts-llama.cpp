@@ -849,19 +849,17 @@ static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, co
     }
 
     // find highest prio backend that supports the buffer type and the op
+    int found = -1;
     for (int i = 0; i < sched->n_backends; i++) {
         if (ggml_backend_supports_buft(sched->backends[i], buffer->buft) &&
             ggml_backend_supports_op(sched->backends[i], op)) {
-            return i;
+            found = i; break;
         }
     }
-
-#ifndef NDEBUG
-    GGML_LOG_DEBUG("%s: warning: no backend supports op %s with a weight with buffer type %s used in tensor %s, the weight will need to be copied\n",
-        __func__, ggml_op_desc(tensor), ggml_backend_buffer_name(buffer), tensor->name);
-#endif
-
-    return -1;
+    if (found == -1 && strncmp(ggml_op_name(op->op), "GET_ROWS", 8) == 0) {
+        fprintf(stderr, "dyn-ex sched GET_ROWS: no backend in %d backends, src0=%s\n", sched->n_backends, op->src[0] ? ggml_get_name(op->src[0]) : "null");
+    }
+    return found;
 }
 
 #if 0

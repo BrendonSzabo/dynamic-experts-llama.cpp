@@ -1604,6 +1604,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             t->nb[2] = t->nb[1] * ne1;
             t->nb[3] = t->nb[2] * n_slots;
             t->flags = GGML_TENSOR_FLAG_EXTERNAL;
+            t->flags = GGML_TENSOR_FLAG_EXTERNAL;
 
             ggml_backend_tensor_alloc(slot_buf.get(), t, (char *)ggml_backend_buffer_get_base(slot_buf.get()) + offset);
             return t;

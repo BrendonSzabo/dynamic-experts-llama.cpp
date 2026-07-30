@@ -967,6 +967,10 @@ bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
 }
 
 static void ggml_gallocr_init_tensor(ggml_gallocr_t galloc, struct ggml_tensor * tensor, struct tensor_alloc * tensor_alloc) {
+    if (tensor->flags & GGML_TENSOR_FLAG_EXTERNAL) {
+        if (tensor->name && tensor->name[0]) fprintf(stderr, "dyn-ex alloc skip: %s (EXTERNAL)\n", tensor->name);
+        return;
+    }
     int buffer_id = tensor_alloc->buffer_id;
     assert(tensor->data || tensor->view_src || ggml_backend_buft_get_alloc_size(galloc->bufts[buffer_id], tensor) <= tensor_alloc->size_max);
 
