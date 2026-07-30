@@ -1424,27 +1424,22 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         int n_layers = (int)de->t_barrier_host.size();
         barrier_thread = std::thread([this, de, n_layers]() {
             for (int il = 0; il < n_layers; il++) {
-                int32_t * buf = (int32_t *)de->t_barrier_host[il];
-                if (!buf) continue;
-                int n_total = (int)de->t_barrier[il]->ne[0];
-                while (buf[n_total - 2] == 0) {}
-                fprintf(stderr, "dyn-ex thread: L%d ready n_se=%d ids=[%d,%d,%d,%d]\n", il, buf[1], buf[2], buf[3], buf[4], buf[5]);
-                fprintf(stderr, "dyn-ex thread: L%d calling ensure with ids=%p n_ids=%d\n", il, (void*)(buf+2), buf[1]);
-                model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
-                // verify: read slot_map for the experts the router selected
-                {
-                    auto * sm = model.layers[il].ffn_slot_map;
-                    if (sm && sm->data && il < 1 && buf[1] >= 3) {
-                        fprintf(stderr, "dyn-ex verify L0: sm_vals=");
-                        for (int k = 0; k < buf[1] && k < 8; k++) {
-                            int eid = buf[2 + k];
-                            int32_t sv; ggml_backend_tensor_get(sm, &sv, eid*4, 4);
-                            fprintf(stderr, "[%d]=%d ", eid, sv);
-                        }
-                        fprintf(stderr, "\n");
-                    }
+                auto * t = de->t_barrier[il];
+                if (!t) continue;
+                int n_total = (int)t->ne[0];
+                int32_t ready = 0;
+                while (ready == 0) {
+                    ggml_backend_tensor_get(t, &ready, (n_total - 2) * sizeof(int32_t), sizeof(int32_t));
                 }
-                buf[n_total - 1] = 1;
+                int32_t n_se = 0;
+                ggml_backend_tensor_get(t, &n_se, 1 * sizeof(int32_t), sizeof(int32_t));
+                std::vector<int32_t> ids(n_se);
+                ggml_backend_tensor_get(t, ids.data(), 2 * sizeof(int32_t), n_se * sizeof(int32_t));
+                fprintf(stderr, "dyn-ex thread: L%d n_se=%d ids[0]=%d\n", il, n_se, n_se>0?ids[0]:-1);
+                model.dyn_ex_ensure_layer(il, ids.data(), n_se);
+                int32_t go = 1;
+                // use raw cudaMemcpy — async ggml_backend_tensor_set may not be visible to spinning GPU kernel
+                cudaMemcpy((char*)t->data + (n_total - 1) * sizeof(int32_t), &go, sizeof(int32_t), cudaMemcpyHostToDevice);
                 fprintf(stderr, "dyn-ex thread: L%d go set\n", il);
             }
         });

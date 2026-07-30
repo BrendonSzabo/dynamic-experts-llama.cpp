@@ -807,28 +807,25 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
 
 void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
     int max_el = n_expert_used * 4096;
+    auto * dev_buft = ggml_backend_dev_buffer_type(dev);
+    size_t total_bytes = (max_el + 2) * sizeof(int32_t);
     for (int i = 0; i < n_layers; i++) {
-#ifdef GGML_USE_CUDA
-        void * hp = nullptr;
-        cudaHostAlloc(&hp, (max_el + 2) * sizeof(int32_t), cudaHostAllocMapped);
-        if (hp) {
-            memset(hp, 0, (max_el + 2) * sizeof(int32_t));
-            void * dp = nullptr;
-            cudaHostGetDevicePointer(&dp, hp, 0);
-            auto * t = new ggml_tensor();
-            memset(t, 0, sizeof(ggml_tensor));
-            t->type = GGML_TYPE_I32;
-            t->ne[0] = max_el + 2; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
-            t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
-            t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
-            t->data = dp;
-            t->buffer = nullptr;
-            cache->t_barrier.push_back(t);
-            cache->t_barrier_host.push_back(hp);
-            continue;
+        auto buf = ggml_backend_buft_alloc_buffer(dev_buft, total_bytes);
+        if (!buf) { cache->t_barrier.push_back(nullptr); cache->t_barrier_host.push_back(nullptr); continue; }
+        // zero-init (raw buffer, not yet in USE)
+        {
+            std::vector<uint8_t> zero(total_bytes, 0);
+            // use raw cudaMemcpy since this buffer isn't in use yet
+            cudaMemcpy(ggml_backend_buffer_get_base(buf), zero.data(), total_bytes, cudaMemcpyHostToDevice);
         }
-#endif
-        cache->t_barrier.push_back(nullptr);
+        auto * t = new ggml_tensor();
+        memset(t, 0, sizeof(ggml_tensor));
+        t->type = GGML_TYPE_I32;
+        t->ne[0] = max_el + 2; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
+        t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
+        t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
+        ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
+        cache->t_barrier.push_back(t);
         cache->t_barrier_host.push_back(nullptr);
     }
 }

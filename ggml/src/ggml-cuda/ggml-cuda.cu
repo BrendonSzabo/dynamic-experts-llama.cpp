@@ -5434,21 +5434,14 @@ __global__ void dyn_ex_barrier_kernel(
     const int32_t * __restrict__ src,
     int n_elements,
     int n_total) {
-    buf[1] = n_elements; // actual count
-    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) {
-        buf[2 + i] = src[i];
-    }
+    buf[1] = n_elements;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) buf[2 + i] = src[i];
     __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        buf[n_total - 2] = 1; // ready
-        printf("dyn-ex GPU: ready n_e=%d n_tot=%d\n", n_elements, n_total);
+        buf[n_total - 2] = 1;
         __threadfence_system();
-        printf("dyn-ex GPU: spinning on go\n");
-        while (buf[n_total - 1] == 0) {
-            __threadfence_system();
-        }
-        printf("dyn-ex GPU: go!\n");
+        while (buf[n_total - 1] == 0) { __threadfence_system(); }
     }
     __syncthreads();
 }
