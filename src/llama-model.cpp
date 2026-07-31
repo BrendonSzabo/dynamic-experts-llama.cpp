@@ -1564,17 +1564,22 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             throw std::runtime_error(format("dyn-ex: failed to open %s", params.dyn_ex_path));
         }
 
-        // find GPU device — use first GPU in dev_layer (TENSOR_SKIP makes expert tensors null)
+        // find GPU device
         ggml_backend_dev_t gpu_dev = cpu_dev;
+        fprintf(stderr, "dyn-ex gpu_dev: buft_list_size=%zu empty=%d\n",
+            pimpl->gpu_buft_list.size(), pimpl->gpu_buft_list.empty());
         if (!pimpl->gpu_buft_list.empty()) {
             gpu_dev = pimpl->gpu_buft_list.begin()->first;
         }
+        fprintf(stderr, "dyn-ex gpu_dev: final=%p cpu_dev=%p\n", (void*)gpu_dev, (void*)cpu_dev);
 
         // grab original expert tensor metadata from first MoE layer
         pimpl->dyn_ex = dyn_ex_cache_init(
             reader, params.dyn_ex_n_slots, gpu_dev,
-            pimpl->gpu_buft_list.begin()->second[0].second,
+            ggml_backend_dev_buffer_type(gpu_dev),
             nullptr, nullptr, nullptr, nullptr);
+        fprintf(stderr, "dyn-ex init result: cache=%p\n", (void*)pimpl->dyn_ex);
+        fflush(stderr);
         if (!pimpl->dyn_ex) {
             dyn_ex_reader_close(reader);
             throw std::runtime_error("dyn-ex: cache init failed");
@@ -1630,6 +1635,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             size_t sm_offset = (size_t)il * hparams.n_expert * sizeof(int32_t);
             ggml_backend_tensor_alloc(pimpl->dyn_ex->buf_slot_map.get(), layer.ffn_slot_map,
                 (char *)ggml_backend_buffer_get_base(pimpl->dyn_ex->buf_slot_map.get()) + sm_offset);
+            // fprintf(stderr, "dyn-ex load_tensors: L%d sm_data=%p\n", il, layer.ffn_slot_map->data);
+            fflush(stderr);
 
             layer.ffn_gate_up_exps = make_slot_tensor(il, de->pi_gate_up,
                 pimpl->dyn_ex->buf_gate_up, pimpl->dyn_ex->gate_up_expert_size);

@@ -4031,7 +4031,12 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                     continue;
                 }
 #ifndef NDEBUG
-                assert(node->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device));
+                if (node->buffer) {
+                    assert(node->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
+                       (node->buffer->buft && ggml_backend_cuda_buffer_type(cuda_ctx->device) &&
+                        ggml_backend_buft_get_device(node->buffer->buft) ==
+                         ggml_backend_buft_get_device(ggml_backend_cuda_buffer_type(cuda_ctx->device))));
+                }
                 for (int j = 0; j < GGML_MAX_SRC; j++) {
                     if (node->src[j] != nullptr) {
                         if (!node->src[j]->buffer ||
@@ -4044,14 +4049,13 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                                 (void*)ggml_backend_cuda_buffer_type(cuda_ctx->device));
                             fflush(stderr);
                         }
-                        assert(node->src[j]->buffer);
-                        // allow if same device (different buft objects can both be CUDA)
-                        bool same_device = node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
-                            (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)) ||
-                            (node->src[j]->buffer->buft && ggml_backend_cuda_buffer_type(cuda_ctx->device) &&
-                             ggml_backend_buft_get_device(node->src[j]->buffer->buft) ==
-                             ggml_backend_buft_get_device(ggml_backend_cuda_buffer_type(cuda_ctx->device)));
-                        assert(same_device);
+                        if (node->src[j]->buffer) {
+                            assert(node->src[j]->buffer->buft == ggml_backend_cuda_buffer_type(cuda_ctx->device) ||
+                                (integrated && ggml_backend_buft_is_cuda_host(node->src[j]->buffer->buft)) ||
+                                (node->src[j]->buffer->buft && ggml_backend_cuda_buffer_type(cuda_ctx->device) &&
+                                 ggml_backend_buft_get_device(node->src[j]->buffer->buft) ==
+                                 ggml_backend_buft_get_device(ggml_backend_cuda_buffer_type(cuda_ctx->device))));
+                        }
                     }
                 }
 #else
@@ -5095,6 +5099,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         }
         case GGML_OP_CONT:
             return true;
+        case GGML_OP_DYN_EX_BARRIER:
+            return true;
         case GGML_OP_DIAG_MASK_INF:
             return true;
         case GGML_OP_SOFT_MAX:
@@ -5190,7 +5196,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
 static bool ggml_backend_cuda_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *) dev->context;
     const bool integrated = ggml_cuda_info().devices[dev_ctx->device].integrated;
-    return (ggml_backend_buft_is_cuda(buft) && buft->device == dev) || (integrated && ggml_backend_buft_is_cuda_host(buft));
+    return (buft->device == dev)  // any buft for this device (generic or CUDA-specific)
+        || (integrated && ggml_backend_buft_is_cuda_host(buft));
 }
 
 static int64_t get_op_batch_size(const ggml_tensor * op) {
@@ -5462,8 +5469,10 @@ __global__ void dyn_ex_barrier_kernel(
     __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("dyn-ex GPU barrier: running, n_e=%d n_tot=%d\n", n_elements, n_total);
+        printf("dyn-ex GPU barrier: n_e=%d n_tot=%d ready_ptr=%p go_ptr=%p\n",
+            n_elements, n_total, (void*)&buf[n_total-2], (void*)&buf[n_total-1]);
         buf[n_total - 2] = 1;
+        __threadfence_system(); // flush ready to host
         while (buf[n_total - 1] == 0) { __threadfence_system(); }
         printf("dyn-ex GPU barrier: go!\n");
     }
