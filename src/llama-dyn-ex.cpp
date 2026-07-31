@@ -419,7 +419,7 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         int s = cache->h_slot_of[layer * cache->n_experts + eid];
         if (s == DYN_EX_SENTINEL) n_unique++;
     }
-    //if(0)fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
+    fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
 
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
@@ -436,32 +436,44 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
     for (int i = 0; i < n_ids; i++) {
         int eid = expert_ids[i];
+        fprintf(stderr, "dyn-ex ensure L%d load i=%d eid=%d\n", layer, i, eid); fflush(stderr);
         if (eid < 0 || eid >= n_experts) continue;
+        fprintf(stderr, "dyn-ex ensure: past eid boundery check\n");
 
         // already loaded?
         int existing_slot = cache->h_slot_of[layer_off_expert + eid];
         if (existing_slot != DYN_EX_SENTINEL) continue;
+        fprintf(stderr, "dyn-ex ensure: not already loaded\n"); fflush(stderr);
 
         // find a free slot (round-robin reuse)
         int slot = -1;
         for (int attempt = 0; attempt < n_slots; attempt++) {
             int s = (next_slot + attempt) % n_slots;
+            fprintf(stderr, "dyn-ex ensure: looking for free slot: %d\n", s); fflush(stderr);
             if (!cache->h_slot_used[layer_off_slot + s]) {
                 slot = s;
                 break;
             }
         }
         if (slot < 0) {
-            // all slots in use: evict current next_slot
-            slot = next_slot;
-            int victim = cache->h_expert_in[layer_off_slot + slot];
-            // keep old slot_map entry pointing to this slot (stale but valid index)
-            // predictor will prefetch to fix staleness; DYN_EX_SENTINEL would crash ggml_mul_mat_id
+            // all slots in use — find one whose expert is NOT in current batch
+            for (int attempt = 0; attempt < n_slots; attempt++) {
+                int s = (next_slot + attempt) % n_slots;
+                int victim_eid = cache->h_expert_in[layer_off_slot + s];
+                bool needed = false;
+                for (int j = 0; j < n_ids; j++) {
+                    if (expert_ids[j] == victim_eid) { needed = true; break; }
+                }
+                if (!needed) { slot = s; break; }
+            }
+            // if all slots contain needed experts (unlikely for n_slots < n_expert_used), fall back
+            if (slot < 0) slot = next_slot;
         }
         next_slot = (slot + 1) % n_slots;
 
         // wait for any in-flight async copy on this slot before reusing it
         if (cache->copy_backend) {
+            fprintf(stderr, "dyn-ex ensure: waiting for inflight copies to end.\n"); fflush(stderr);
             int ev_idx = layer_off_slot + slot;
             auto & ev = cache->copy_events[ev_idx];
             if (ev) {
@@ -471,6 +483,8 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
         // load gate_up weights from .bin → CPU → GPU
         if (cache->buf_gate_up && cache->pi_gate_up >= 0) {
+            fprintf(stderr, "dyn-ex ensure: load gate up\n"); fflush(stderr);
+
             size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate_up, layer, eid,
                                          cpu_buf.data(), cache->gate_up_expert_size);
             if (n == cache->gate_up_expert_size) {
@@ -479,6 +493,8 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
             }
         }
         if (cache->buf_gate && cache->pi_gate >= 0) {
+            fprintf(stderr, "dyn-ex ensure: load gate\n"); fflush(stderr);
+
             size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate, layer, eid,
                                          cpu_buf.data(), cache->gate_expert_size);
             if (n == cache->gate_expert_size) {
@@ -487,6 +503,8 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
             }
         }
         if (cache->buf_up && cache->pi_up >= 0) {
+            fprintf(stderr, "dyn-ex ensure: load up\n"); fflush(stderr);
+
             size_t n = dyn_ex_read_param(cache->reader, cache->pi_up, layer, eid,
                                          cpu_buf.data(), cache->up_expert_size);
             if (n == cache->up_expert_size) {
@@ -500,6 +518,8 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
             size_t n = dyn_ex_read_param(cache->reader, cache->pi_down, layer, eid,
                                          cpu_buf.data(), cache->down_expert_size);
             if (n == cache->down_expert_size) {
+                fprintf(stderr, "dyn-ex ensure: load down\ns"); fflush(stderr);
+
                 size_t slot_off = (size_t)(layer_off_slot + slot) * cache->down_stride;
                 raw_buf_write(cache->buf_down.get(), slot_off, cpu_buf.data(), n);
             }
@@ -575,9 +595,10 @@ void dyn_ex_cache_prefetch(dyn_ex_cache * cache, int layer, const int * expert_i
     // ring-buffer staging index
     std::vector<uint8_t> & cpu_buf = cache->staging_bufs[cache->staging_idx];
     cache->staging_idx = (cache->staging_idx + 1) % (int)cache->staging_bufs.size();
-
     int next_slot = 0;
+
     for (int i = 0; i < n_ids; i++) {
+        fprintf(stderr, "dyn-ex ensure L%d load i=%d of %d\n", layer, i, n_ids); fflush(stderr);
         int eid = expert_ids[i];
         if (eid < 0 || eid >= n_experts) continue;
 
