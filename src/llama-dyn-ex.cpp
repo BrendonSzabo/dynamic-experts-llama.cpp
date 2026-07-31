@@ -408,6 +408,7 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
 
 void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
+    fprintf(stderr, "dyn-ex ensure: entering loop n_ids=%d\n", n_ids); fflush(stderr);
     if (!expert_ids || n_ids <= 0) return;
 
     // count unique experts

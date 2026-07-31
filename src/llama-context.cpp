@@ -1437,7 +1437,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 while (buf[n_total - 2] == 0) {}
                 fprintf(stderr, "dyn-ex thread L%d: GOT READY n_se=%d\n", il, buf[1]);
                 model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
+                fprintf(stderr, "dyn-ex thread L%d: ensure done, setting go\n", il);
                 buf[n_total - 1] = 1;
+                fprintf(stderr, "dyn-ex thread L%d: go set\n", il);
                 fflush(stderr);
             }
         });
