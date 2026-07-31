@@ -2028,6 +2028,11 @@ static struct ggml_tensor * graph_copy_dup_tensor(struct ggml_hash_set hash_set,
         return node_copies[ggml_hash_find(&hash_set, src)];
     }
 
+    if (src->flags & GGML_TENSOR_FLAG_EXTERNAL) {
+        node_copies[id] = src;
+        return src;
+    }
+
     struct ggml_tensor * dst = ggml_dup_tensor_layout(src->data && !src->view_src ? ctx_allocated : ctx_unallocated, src);
     if (src->view_src != NULL) {
         dst->view_src = graph_copy_dup_tensor(hash_set, node_copies, ctx_allocated, ctx_unallocated, src->view_src);
@@ -2064,7 +2069,7 @@ static void graph_copy_init_tensor(struct ggml_hash_set * hash_set, struct ggml_
         enum ggml_status status = ggml_backend_view_init(dst);
         GGML_ASSERT(status == GGML_STATUS_SUCCESS);
     }
-    else {
+    else if (dst != src) {
         ggml_backend_tensor_copy(src, dst);
     }
 

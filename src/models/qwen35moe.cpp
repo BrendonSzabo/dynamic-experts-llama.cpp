@@ -41,6 +41,10 @@ void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
     LLAMA_LOAD_LOCALS;
 
     const bool mtp_only = (hparams.n_layer_nextn > 0) && (ml.get_weight("blk.0.attn_norm.weight") == nullptr);
+    fprintf(stderr, "qwen35moe: n_layer_nextn=%d  blk.0.attn_norm=%s  -> mtp_only=%d trunk_flags=%d\n",
+        (int)hparams.n_layer_nextn,
+        ml.get_weight("blk.0.attn_norm.weight") ? "found" : "MISSING",
+        (int)mtp_only, mtp_only ? TENSOR_NOT_REQUIRED : 0);
     const int trunk_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
 
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);

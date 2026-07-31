@@ -268,6 +268,17 @@ llama_context::llama_context(
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
 
+    if (model.has_dyn_ex() && model.hparams.n_expert_used > 0) {
+        int max_tok = model.dyn_ex_get_cache()->n_slots / (int)model.hparams.n_expert_used;
+        if (max_tok < 1) max_tok = 1;
+        if ((int)cparams.n_ubatch > max_tok) {
+            LLAMA_LOG_INFO("%s: dyn-ex: clamping n_ubatch %u -> %d (n_slots=%d / n_expert_used=%d)\n",
+                __func__, cparams.n_ubatch, max_tok,
+                model.dyn_ex_get_cache()->n_slots, (int)model.hparams.n_expert_used);
+            cparams.n_ubatch = (uint32_t)max_tok;
+        }
+    }
+
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
 
     cparams.op_offload = params.op_offload;
@@ -1369,10 +1380,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
         // dyn-ex: verify scheduler doesn't change slot buffers
         std::vector<std::pair<void*,void*>> slot_saved;
+        std::vector<std::pair<void*,void*>> barrier_saved;
         if (model.has_dyn_ex()) {
             for (int il = 0; il < model.hparams.n_layer_all; il++) {
                 auto * t = model.layers[il].ffn_gate_exps;
                 if (t) slot_saved.push_back({t->buffer, t->data});
+            }
+            auto * de = model.dyn_ex_get_cache();
+            for (size_t il = 0; il < de->t_barrier.size(); il++) {
+                auto * t = de->t_barrier[il];
+                barrier_saved.push_back({t ? (void*)t->buffer : nullptr, t ? t->data : nullptr});
             }
         }
 
@@ -1407,6 +1424,21 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
                 t->data   = (char*)base + sm_offset;
             }
         }
+        {
+            auto * de = model.dyn_ex_get_cache();
+            for (size_t il = 0; il < de->t_barrier.size(); il++) {
+                if (il >= barrier_saved.size()) break;
+                auto * t = de->t_barrier[il];
+                if (!t) continue;
+                if (t->data != barrier_saved[il].second || (void*)t->buffer != barrier_saved[il].first) {
+                    fprintf(stderr, "dyn-ex: L%zu barrier RESTORE buf=%p->%p data=%p->%p\n",
+                        il, barrier_saved[il].first, (void*)t->buffer,
+                        barrier_saved[il].second, t->data);
+                    t->buffer = (ggml_backend_buffer_t)barrier_saved[il].first;
+                    t->data   = barrier_saved[il].second;
+                }
+            }
+        }
     }
 
     // set the input data for the input tensors
@@ -1423,24 +1455,22 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         auto * de = model.dyn_ex_get_cache();
         int n_layers = (int)de->t_barrier_host.size();
         barrier_thread = std::thread([this, de, n_layers]() {
-            if(0) fprintf(stderr, "dyn-ex thread STARTED n_layers=%d host[0]=%p\n", n_layers, (void*)de->t_barrier_host[0]);
+            fprintf(stderr, "dyn-ex thread STARTED n_layers=%d host[0]=%p\n", n_layers, (void*)de->t_barrier_host[0]);
             fflush(stderr);
             for (int il = 0; il < n_layers; il++) {
                 int32_t * buf = (int32_t *)de->t_barrier_host[il];
-                if(0) fprintf(stderr, "dyn-ex thread L%d: buf=%p\n", il, (void*)buf);
-                fflush(stderr);
-                if (!buf) continue;
+                if (!buf) { fprintf(stderr, "dyn-ex thread L%d: buf=NULL skip\n", il); continue; }
                 int n_total = (int)de->t_barrier[il]->ne[0];
-                if(0) fprintf(stderr, "dyn-ex thread L%d: ready_ptr=%p go_ptr=%p\n", il,
-                    (void*)&buf[n_total-2], (void*)&buf[n_total-1]);
+                fprintf(stderr, "dyn-ex thread L%d: buf=%p host=%p n_tot=%d\n", il,
+                    (void*)buf, (void*)de->t_barrier_host[il], n_total);
                 buf[n_total - 2] = 0;
+                buf[n_total - 1] = 0;
+                fprintf(stderr, "dyn-ex thread L%d: waiting ready...\n", il);
                 while (buf[n_total - 2] == 0) {}
-                if(0) fprintf(stderr, "dyn-ex thread L%d: GOT READY n_se=%d\n", il, buf[1]);
+                fprintf(stderr, "dyn-ex thread L%d: GOT READY n_se=%d ids[0]=%d\n", il, buf[1], buf[1] > 0 ? buf[2] : -1);
                 model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
-                if(0) fprintf(stderr, "dyn-ex thread L%d: ensure done, setting go\n", il);
+                fprintf(stderr, "dyn-ex thread L%d: ensure done, setting go\n", il);
                 buf[n_total - 1] = 1;
-                if(0) fprintf(stderr, "dyn-ex thread L%d: go set\n", il);
-                fflush(stderr);
             }
         });
     }
@@ -2102,8 +2132,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
                 case LLAMA_POOLING_TYPE_UNSPECIFIED:
                     {
                         GGML_ABORT("unknown pooling type");
-                    }
-            }
+        }
+    }
         }
 
         extract_layer_inputs(res, n_tokens_prev, ubatch.n_tokens);

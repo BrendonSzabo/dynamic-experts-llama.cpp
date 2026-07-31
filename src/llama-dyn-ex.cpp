@@ -37,10 +37,6 @@ static ggml_type dyn_ex_code_to_ggml_type(uint8_t code) {
     }
 }
 
-static size_t dyn_ex_ggml_type_size(ggml_type type) {
-    return ggml_type_size(type) / ggml_blck_size(type);
-}
-
 static inline uint32_t read_u32_le(const uint8_t * p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
@@ -160,7 +156,7 @@ dyn_ex_reader * dyn_ex_reader_open(const char * path) {
         for (int d = 0; d < r->params[i].ndim; d++) {
             numel *= r->params[i].shape[d];
         }
-        size_t per_expert_bytes = (size_t)numel * dyn_ex_ggml_type_size(r->params[i].type);
+        size_t per_expert_bytes = (size_t)numel * ggml_type_size(r->params[i].type) / ggml_blck_size(r->params[i].type);
         size_t stride           = round_up_page(per_expert_bytes);
 
         r->param_data_off[i] = data_off;
@@ -168,6 +164,14 @@ dyn_ex_reader * dyn_ex_reader_open(const char * path) {
 
         data_off += (size_t)r->n_layers * (size_t)r->n_experts * stride;
     }
+
+    for (int i = 0; i < r->n_params; i++) {
+        fprintf(stderr, "DYN-EX PARAM %d: %s  data_off=%zu  stride=%zu  expert_bytes=%zu  type=%d/%d\n",
+            i, r->params[i].name, r->param_data_off[i], r->param_stride[i],
+            dyn_ex_param_size(r, i), (int)r->params[i].dtype_code, (int)r->params[i].type);
+    }
+    fprintf(stderr, "DYN-EX READER: n_layers=%d n_experts=%d mmap_size=%zu header_size=%d\n",
+        r->n_layers, r->n_experts, r->mmap_size, DYN_EX_HEADER_SIZE);
 
     LLAMA_LOG_INFO("dyn-ex: opened %s: %d layers, %d experts, %d params\n",
                    path, r->n_layers, r->n_experts, r->n_params);
@@ -189,13 +193,20 @@ size_t dyn_ex_read_param(const dyn_ex_reader * r, int param_idx, int layer, int 
     if (expert_id < 0 || expert_id >= r->n_experts) return 0;
 
     size_t expert_size = dyn_ex_param_size(r, param_idx);
-    if (buf_size < expert_size) return 0;
+    if (buf_size < expert_size) {
+        fprintf(stderr, "DYN-EX READ PARAM FAIL: buf_size=%zu < expert_size=%zu param=%s\n",
+            buf_size, expert_size, r->params[param_idx].name);
+        return 0;
+    }
 
-    // offset = param_data_off + (layer * n_experts + expert_id) * param_stride
     size_t file_off = r->param_data_off[param_idx]
                     + (size_t)(layer * r->n_experts + expert_id) * r->param_stride[param_idx];
 
-    if (file_off + expert_size > r->mmap_size) return 0;
+    if (file_off + expert_size > r->mmap_size) {
+        fprintf(stderr, "DYN-EX READ PARAM FAIL: file_off=%zu + expert_size=%zu > mmap_size=%zu param=%s\n",
+            file_off, expert_size, r->mmap_size, r->params[param_idx].name);
+        return 0;
+    }
 
     memcpy(buf, (const uint8_t *)r->mmap_addr + file_off, expert_size);
     return expert_size;
@@ -375,7 +386,9 @@ dyn_ex_cache * dyn_ex_cache_init(
                 }
                 // 4 pinned staging buffers for ring-buffer async copies
                 size_t max_expert = cache->gate_up_expert_size;
-                if (cache->down_expert_size > max_expert) max_expert = cache->down_expert_size;
+                if (cache->gate_expert_size    > max_expert) max_expert = cache->gate_expert_size;
+                if (cache->up_expert_size      > max_expert) max_expert = cache->up_expert_size;
+                if (cache->down_expert_size    > max_expert) max_expert = cache->down_expert_size;
                 for (int i = 0; i < 4; i++) {
                     cache->staging_bufs.emplace_back(max_expert);
                 }
@@ -419,7 +432,9 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
 
 void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
-    if(0) fprintf(stderr, "dyn-ex ensure: entering loop n_ids=%d\n", n_ids); fflush(stderr);
+    fprintf(stderr, "dyn-ex ensure L%d: n_ids=%d", layer, n_ids);
+    if (n_ids > 0) { fprintf(stderr, " ids=["); for(int i=0;i<n_ids&&i<8;i++) fprintf(stderr,"%d ",expert_ids[i]); fprintf(stderr,"]"); }
+    fprintf(stderr,"\n"); fflush(stderr);
     if (!expert_ids || n_ids <= 0) return;
 
     // count unique experts
@@ -439,7 +454,9 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
     // CPU staging buffer
     size_t max_expert_size = cache->gate_up_expert_size;
-    if (cache->down_expert_size > max_expert_size) max_expert_size = cache->down_expert_size;
+    if (cache->gate_expert_size    > max_expert_size) max_expert_size = cache->gate_expert_size;
+    if (cache->up_expert_size      > max_expert_size) max_expert_size = cache->up_expert_size;
+    if (cache->down_expert_size    > max_expert_size) max_expert_size = cache->down_expert_size;
     std::vector<uint8_t> cpu_buf(max_expert_size);
 
     bool slot_map_changed = false;
@@ -536,7 +553,12 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
             }
         }
 
-        // update tracking
+        {
+            int old_eid = cache->h_expert_in[layer_off_slot + slot];
+            if (old_eid != DYN_EX_SENTINEL && old_eid != eid) {
+                cache->h_slot_of[layer_off_expert + old_eid] = DYN_EX_SENTINEL;
+            }
+        }
         cache->h_slot_of[layer_off_expert + eid] = slot;
         cache->h_expert_in[layer_off_slot + slot] = eid;
         cache->h_slot_used[layer_off_slot + slot] = 1;
@@ -862,7 +884,7 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, i
             t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
             t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
             t->data = dp;
-            t->flags = GGML_TENSOR_FLAG_EXTERNAL;
+            t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
             cache->t_barrier.push_back(t);
             cache->t_barrier_host.push_back(hp);
             continue;

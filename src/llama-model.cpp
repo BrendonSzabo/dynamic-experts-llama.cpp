@@ -1555,7 +1555,12 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
     // dyn-ex: set up dynamic expert cache and replace layer expert tensors
+    fprintf(stderr, "DYN-EX CHECK: n_expert=%d n_slots=%d path=%s\n",
+            (int)hparams.n_expert, params.dyn_ex_n_slots,
+            params.dyn_ex_path ? params.dyn_ex_path : "(null)");
     if (hparams.n_expert > 0 && params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]) {
+        fprintf(stderr, "DYN-EX ENTERED: initializing from %s n_slots=%d\n",
+                params.dyn_ex_path, params.dyn_ex_n_slots);
         LLAMA_LOG_INFO("%s: initializing dynamic experts from %s (n_slots=%d)\n",
                        __func__, params.dyn_ex_path, params.dyn_ex_n_slots);
 
@@ -1607,7 +1612,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             size_t blck = ggml_blck_size(type);
             t->nb[0] = ggml_type_size(type);
             t->nb[1] = t->nb[0] * (ne0 / blck);
-            t->nb[2] = t->nb[1] * ne1;
+            t->nb[2] = (int64_t)slot_stride;
             t->nb[3] = t->nb[2] * n_slots;
             t->flags = GGML_TENSOR_FLAG_EXTERNAL;
             t->flags = GGML_TENSOR_FLAG_EXTERNAL;
@@ -1616,10 +1621,22 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             return t;
         };
 
+        bool verify_done = false;
         for (int il = 0; il < n_layer_all; il++) {
             auto & layer = layers[il];
 
-            bool is_moe = layer.ffn_gate_up_exps || layer.ffn_down_exps;
+            ggml_tensor * orig_gate_up = layer.ffn_gate_up_exps;
+            ggml_tensor * orig_gate    = layer.ffn_gate_exps;
+            ggml_tensor * orig_up      = layer.ffn_up_exps;
+            ggml_tensor * orig_down    = layer.ffn_down_exps;
+
+            fprintf(stderr, "DYN-EX L%d ORIG: gate_up=%p(%lldx%lldx%lld) gate=%p(%lldx%lldx%lld) up=%p(%lldx%lldx%lld) down=%p(%lldx%lldx%lld)\n",
+                il,
+                (void*)orig_gate_up, orig_gate_up?(long long)orig_gate_up->ne[0]:0, orig_gate_up?(long long)orig_gate_up->ne[1]:0, orig_gate_up?(long long)orig_gate_up->ne[2]:0,
+                (void*)orig_gate,    orig_gate   ?(long long)orig_gate->ne[0]:0,    orig_gate   ?(long long)orig_gate->ne[1]:0,    orig_gate   ?(long long)orig_gate->ne[2]:0,
+                (void*)orig_up,      orig_up     ?(long long)orig_up->ne[0]:0,      orig_up     ?(long long)orig_up->ne[1]:0,      orig_up     ?(long long)orig_up->ne[2]:0,
+                (void*)orig_down,    orig_down   ?(long long)orig_down->ne[0]:0,    orig_down   ?(long long)orig_down->ne[1]:0,    orig_down   ?(long long)orig_down->ne[2]:0);
+
             layer.ffn_slot_map = new ggml_tensor();
             memset(layer.ffn_slot_map, 0, sizeof(ggml_tensor));
             layer.ffn_slot_map->type   = GGML_TYPE_I32;
@@ -1647,6 +1664,38 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_down_exps = make_slot_tensor(il, de->pi_down,
                 pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
 
+            if (il == 0 || !verify_done) {
+                bool is_moe_slot = layer.ffn_gate_up_exps || layer.ffn_gate_exps || layer.ffn_up_exps || layer.ffn_down_exps;
+                fprintf(stderr, "DYN-EX L%d SLOT: gate_up=%p gate=%p up=%p down=%p is_moe_slot=%d\n",
+                    il, (void*)layer.ffn_gate_up_exps, (void*)layer.ffn_gate_exps,
+                    (void*)layer.ffn_up_exps, (void*)layer.ffn_down_exps, is_moe_slot);
+                if (is_moe_slot) {
+                    verify_done = true;
+                    auto print_slot = [&](ggml_tensor * slot, ggml_tensor * orig, const char * name) {
+                        if (!slot) return;
+                        fprintf(stderr, "DYN-EX L%d %s SLOT: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+                            il, name,
+                            (long long)slot->ne[0], (long long)slot->ne[1], (long long)slot->ne[2],
+                            slot->nb[0], slot->nb[1], slot->nb[2], (int)slot->type);
+                        if (orig) {
+                            fprintf(stderr, "DYN-EX L%d %s ORIG: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+                                il, name,
+                                (long long)orig->ne[0], (long long)orig->ne[1], (long long)orig->ne[2],
+                                orig->nb[0], orig->nb[1], orig->nb[2], (int)orig->type);
+                            GGML_ASSERT(orig->ne[0]  == slot->ne[0]  && "slot ne[0] mismatch");
+                            GGML_ASSERT(orig->ne[1]  == slot->ne[1]  && "slot ne[1] mismatch");
+                            GGML_ASSERT(orig->nb[0]  == slot->nb[0]  && "slot nb[0] mismatch");
+                            GGML_ASSERT(orig->nb[1]  == slot->nb[1]  && "slot nb[1] mismatch");
+                            GGML_ASSERT(slot->nb[2] >= orig->nb[2] && "slot nb[2] too small");
+                        }
+                    };
+                    print_slot(layer.ffn_gate_up_exps, orig_gate_up, "gate_up");
+                    print_slot(layer.ffn_gate_exps,    orig_gate,    "gate");
+                    print_slot(layer.ffn_up_exps,      orig_up,      "up");
+                    print_slot(layer.ffn_down_exps,    orig_down,    "down");
+                }
+            }
+
             pimpl->dyn_ex->t_gate_up[il] = layer.ffn_gate_up_exps;
             pimpl->dyn_ex->t_gate[il]    = layer.ffn_gate_exps;
             pimpl->dyn_ex->t_up[il]      = layer.ffn_up_exps;
@@ -1656,6 +1705,35 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, gpu_dev, n_layer_all, (int)hparams.n_expert_used);
 
         dyn_ex_cache_fill(pimpl->dyn_ex);
+
+        {
+            auto * de = pimpl->dyn_ex;
+            ggml_tensor * t = de->t_gate[0];
+            if (t && t->data && de->pi_gate >= 0) {
+                void * buf_base = ggml_backend_buffer_get_base(de->buf_gate.get());
+                void * slot0_write = (char *)buf_base + 0 * de->gate_stride;
+                fprintf(stderr, "DYN-EX SLOT VERIFY: gate buf_base=%p t_data=%p slot0_write=%p gate_stride=%zu\n",
+                    buf_base, t->data, slot0_write, de->gate_stride);
+                size_t expert_size = de->gate_expert_size;
+                std::vector<uint8_t> gpu_data(64);
+                ggml_backend_tensor_get(t, gpu_data.data(), 0, 64);
+                std::vector<uint8_t> bin_full(expert_size);
+                size_t n = dyn_ex_read_param(de->reader, de->pi_gate, 0, 0, bin_full.data(), expert_size);
+                bool match = (n == expert_size && memcmp(gpu_data.data(), bin_full.data(), 64) == 0);
+                fprintf(stderr, "DYN-EX SLOT VERIFY L0 gate slot0: n=%zu expert_size=%zu gpu=%02x%02x%02x%02x... bin=%02x%02x%02x%02x... match=%d\n",
+                    n, expert_size,
+                    gpu_data[0],gpu_data[1],gpu_data[2],gpu_data[3],
+                    bin_full[0],bin_full[1],bin_full[2],bin_full[3], match);
+                if (!match) {
+                    fprintf(stderr, "DYN-EX SLOT VERIFY GPU:");
+                    for (int i = 0; i < 64; i++) fprintf(stderr, " %02x", gpu_data[i]);
+                    fprintf(stderr, "\nDYN-EX SLOT VERIFY BIN:");
+                    for (int i = 0; i < 64; i++) fprintf(stderr, " %02x", bin_full[i]);
+                    fprintf(stderr, "\n");
+                    GGML_ASSERT(match && "slot data mismatch: GPU slot != .bin source");
+                }
+            }
+        }
 
         // load predictor if specified
         if (params.dyn_ex_predictor && params.dyn_ex_predictor[0]) {
@@ -1813,6 +1891,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
     }
 
     // load tensor data
+    ml.skip_expert_tensors = (params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]);
     for (auto & [ctx, buf_map] : ctx_buf_maps) {
         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
             return false;

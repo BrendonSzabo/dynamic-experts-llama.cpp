@@ -1424,6 +1424,8 @@ bool llama_model_loader::load_all_data(
     std::vector<no_init<uint8_t>> read_buf;
     std::vector<std::future<std::pair<ggml_tensor *, bool>>> validation_result;
 
+    int n_skipped_dyn_ex = 0;
+
     // 4 staging buffers for async uploads, each sized 1MB seems to be a good default for single NVMe drives.
     // NVMe raid configurations might require more / larger buffers.
     constexpr size_t n_buffers = 4;
@@ -1530,11 +1532,14 @@ bool llama_model_loader::load_all_data(
         }
 
         // dyn-ex: skip expert weight tensors (loaded on demand from .bin via slot cache)
-        {
+        if (skip_expert_tensors) {
             const char * tname = ggml_get_name(cur);
             if (strstr(tname, "_exps.") || strstr(tname, "_exps_")) {
-                size_t n_size = ggml_nbytes(cur);
+                size_t n_size       = ggml_nbytes(cur);
+                int    n_elems      = (int) ggml_nelements(cur);
+                fprintf(stderr, "DYN-EX SKIP: %s  n_bytes=%zu  n_elems=%d\n", tname, n_size, n_elems);
                 size_done += n_size;
+                n_skipped_dyn_ex++;
                 continue;
             }
         }
@@ -1653,6 +1658,11 @@ bool llama_model_loader::load_all_data(
         }
 
         size_done += n_size;
+    }
+
+    if (n_skipped_dyn_ex > 0) {
+        fprintf(stderr, "DYN-EX SKIP SUMMARY: %d expert tensors skipped (%.1f%% of total data)\n",
+                n_skipped_dyn_ex, 100.0f * (float)size_done / (float)size_data);
     }
 
     // free temporary resources used for async uploads

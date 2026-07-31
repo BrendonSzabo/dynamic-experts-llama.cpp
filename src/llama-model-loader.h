@@ -79,6 +79,7 @@ struct llama_model_loader {
     bool use_direct_io = false;
     bool check_tensors;
     bool no_alloc;
+    bool skip_expert_tensors = false; // dyn-ex: skip _exps tensors in load_all_data
 
     llama_files files;
     llama_ftype ftype;

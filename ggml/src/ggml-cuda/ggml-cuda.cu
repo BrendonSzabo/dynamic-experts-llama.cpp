@@ -1958,8 +1958,21 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     std::vector<int32_t> tokens_per_expert(ne02);
     if(0) fprintf(stderr, "  tokens_per_expert size=%lld\n", (long long)ne02);
 
+    fprintf(stderr, "  sorted path: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ne_get_rows=%lld\n",
+            (long long)ne00, (long long)ne01, (long long)ne02,
+            (long long)ne10, (long long)ne11, (long long)ne12,
+            (long long)ne_get_rows);
+    fprintf(stderr, "  sorted alloc: src1=%lld dst=%lld\n",
+            (long long)(ne12*n_expert_used*ne10*ts_src1_sorted),
+            (long long)(ne2 *n_expert_used* ne0*ts_dst_sorted));
     ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_src1_sorted);
     ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
+
+    if (!src1_sorted.get() || !dst_sorted.get()) {
+        fprintf(stderr, "DYN-EX sorted path: POOL ALLOC FAILED src1=%p dst=%p\n",
+                (void*)src1_sorted.get(), (void*)dst_sorted.get());
+        GGML_ABORT("pool alloc failed in sorted path");
+    }
     if(0) fprintf(stderr, "  allocated src1_sorted (%lld) and dst_sorted (%lld)\n",
             (long long)(ne12*n_expert_used*ne10*ts_src1_sorted),
             (long long)(ne2 *n_expert_used* ne0*ts_dst_sorted));
@@ -1999,21 +2012,25 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const int32_t * ids_to_sorted   = ids_buf_dev.ptr + 0*ne_get_rows;
     const int32_t * ids_from_sorted = ids_buf_dev.ptr + 1*ne_get_rows;
 
-    if(0) fprintf(stderr, "  launching get_rows for src1...\n");
+    if(1) fprintf(stderr, "  launching get_rows for src1...\n");
     get_rows_cuda(src1->data, src1->type, ids_to_sorted, src1_sorted.ptr, type_src1_sorted,
         ne10, nb11, nb12, nb13,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, stream);
     CUDA_CHECK(cudaGetLastError());
-    if(0) fprintf(stderr, "  get_rows for src1 done\n");
+    if(1) fprintf(stderr, "  get_rows for src1 done\n");
 
     char * src1_data_cur = (char *) src1_sorted.ptr;
     char *  dst_data_cur = (char *)  dst_sorted.ptr;
-    if(0) fprintf(stderr, "  processing experts...\n");
+    int n_nonzero = 0;
+    for (int64_t i = 0; i < ne02; i++) if (tokens_per_expert[i]) n_nonzero++;
+    fprintf(stderr, "  processing %d/%lld experts with tokens\n", n_nonzero, (long long)ne02);
     for (int64_t i02 = 0; i02 < ne02; ++i02) {
-        if(0) fprintf(stderr, "  expert %lld: tokens=%d\n", (long long)i02, tokens_per_expert[i02]);
+        fprintf(stderr, "  sorted expert %lld/%lld: tokens=%d ne10=%lld ne01=%lld nb02=%zu\n",
+                (long long)i02, (long long)ne02, tokens_per_expert[i02],
+                (long long)ne10, (long long)ne01, (size_t)nb02);
         if (tokens_per_expert[i02] == 0) {
-            if(0) fprintf(stderr, "    skipping (no tokens)\n");
+            fprintf(stderr, "    skipping (no tokens)\n");
             continue;
         }
 
@@ -2061,10 +2078,18 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         if(0) fprintf(stderr, "    dst slice: ne={%lld,%lld,1}, data=%p\n",
                 (long long)dst_slice.ne[0], (long long)dst_slice.ne[1], (void*)dst_data_cur);
 
-        if(0) fprintf(stderr, "    calling ggml_cuda_mul_mat...\n");
+        fprintf(stderr, "    src0 slice: data=%p ne=[%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+                (void*)src0_slice.data,
+                (long long)src0_slice.ne[0], (long long)src0_slice.ne[1],
+                src0_slice.nb[0], src0_slice.nb[1], src0_slice.nb[2],
+                (int)src0_slice.type);
+
+        fprintf(stderr, "    calling ggml_cuda_mul_mat: src1 ne=[%lld,%lld] dst ne=[%lld,%lld]\n",
+                (long long)src1_slice.ne[0], (long long)src1_slice.ne[1],
+                (long long)dst_slice.ne[0], (long long)dst_slice.ne[1]);
         ggml_cuda_mul_mat(ctx, &src0_slice, &src1_slice, &dst_slice);
         CUDA_CHECK(cudaGetLastError());
-        if(0) fprintf(stderr, "    ggml_cuda_mul_mat done\n");
+        fprintf(stderr, "    ggml_cuda_mul_mat done\n");
 
         src1_data_cur += src1_slice.nb[2];
         dst_data_cur  +=  dst_slice.nb[2];
@@ -3010,6 +3035,9 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
                                int                                       node_idx,
                                std::initializer_list<enum ggml_op>       ops,
                                std::initializer_list<enum ggml_unary_op> unary_ops) {
+    for (auto op : ops) {
+        if (op == GGML_OP_DYN_EX_BARRIER) return false;
+    }
 #ifndef NDEBUG
     const size_t num_unary = std::count(ops.begin(), ops.end(), GGML_OP_UNARY);
     GGML_ASSERT(unary_ops.size() == num_unary);
@@ -5282,6 +5310,8 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
         case GGML_OP_ROPE:
         case GGML_OP_ROPE_BACK:
             return op->ne[2];
+        case GGML_OP_DYN_EX_BARRIER:
+            return true;
         default:
             return ggml_nrows(op);
     }
@@ -5541,10 +5571,10 @@ __global__ void dyn_ex_barrier_kernel(
     __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("dyn-ex GPU barrier: n_e=%d n_tot=%d ready_ptr=%p go_ptr=%p\n",
-            n_elements, n_total, (void*)&buf[n_total-2], (void*)&buf[n_total-1]);
+        printf("dyn-ex GPU barrier: n_e=%d n_tot=%d ready_ptr=%p go_ptr=%p buf=%p\n",
+            n_elements, n_total, (void*)&buf[n_total-2], (void*)&buf[n_total-1], (void*)buf);
         buf[n_total - 2] = 1;
-        __threadfence_system(); // flush ready to host
+        __threadfence_system();
         while (buf[n_total - 1] == 0) { __threadfence_system(); }
         printf("dyn-ex GPU barrier: go!\n");
     }
@@ -5557,6 +5587,8 @@ static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_te
     const int32_t * src_d = (const int32_t *)src->data;
     int n_elements = (int)(src->ne[0] * src->ne[1]);
     int n_total    = (int)dst->ne[0];
+    fprintf(stderr, "dyn-ex op barrier: dst=%s data=%p ne0=%d buf=%p\n",
+        ggml_get_name(dst), dst->data, (int)dst->ne[0], (void*)buf_d);
     int threads = std::min(n_elements + 1, 256);
     int blocks = (n_elements + threads) / threads;
     dyn_ex_barrier_kernel<<<blocks, threads, 0, ctx.stream()>>>(buf_d, src_d, n_elements, n_total);
