@@ -429,7 +429,7 @@ int main(int argc, char ** argv) {
         lora_merge_ctx ctx(params.model.path, params.lora_adapters, params.out_file, params.cpuparams.n_threads);
         ctx.run_merge();
     } catch (const std::exception & err) {
-        fprintf(stderr, "%s\n", err.what());
+        if(0) fprintf(stderr, "%s\n", err.what());
         exit(EXIT_FAILURE);
     }
 

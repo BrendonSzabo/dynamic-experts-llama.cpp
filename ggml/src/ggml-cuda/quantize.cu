@@ -579,7 +579,7 @@ void quantize_mmq_q8_1_cuda(
     GGML_ASSERT(ne00 % 4 == 0);
     GGML_ASSERT(ne0 % QK8_1_MMQ == 0);
 
-    // fprintf(stderr, "dyn-ex quantize mmq: x=%p ne0=%lld ne1=%lld ne2=%lld ne00=%lld ids=%p\n",
+    // if(0) fprintf(stderr, "dyn-ex quantize mmq: x=%p ne0=%lld ne1=%lld ne2=%lld ne00=%lld ids=%p\n",
     //     (void*)x, (long long)ne0, (long long)ne1, (long long)ne2, (long long)ne00, (void*)ids);
 
     // ne1 tends to assume the highest values, therefore use it as the "x" dimension of the CUDA grid:

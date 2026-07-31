@@ -16,7 +16,7 @@
 
 int main(int argc, char **argv) {
     if (argc < 2 || argc > 3) {
-        fprintf(stderr, "Usage: %s <vocab-file> [--ignore-merges]\n", argv[0]);
+        if(0) fprintf(stderr, "Usage: %s <vocab-file> [--ignore-merges]\n", argv[0]);
         return 1;
     }
 
@@ -24,16 +24,16 @@ int main(int argc, char **argv) {
     bool ignore_merges = false;
     if (argc == 3) {
         if (std::strcmp(argv[2], "--ignore-merges") != 0) {
-            fprintf(stderr, "Usage: %s <vocab-file> [--ignore-merges]\n", argv[0]);
+            if(0) fprintf(stderr, "Usage: %s <vocab-file> [--ignore-merges]\n", argv[0]);
             return 1;
         }
         ignore_merges = true;
     }
 
-    fprintf(stderr, "%s : reading vocab from: '%s'\n", __func__, fname.c_str());
+    if(0) fprintf(stderr, "%s : reading vocab from: '%s'\n", __func__, fname.c_str());
 
     if (ignore_merges) {
-        fprintf(stderr, "%s : ignoring merges for tokens inside vocab\n", __func__);
+        if(0) fprintf(stderr, "%s : ignoring merges for tokens inside vocab\n", __func__);
     }
 
     llama_model * model;
@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
         model = llama_model_load_from_file(fname.c_str(), mparams);
 
         if (model == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
             return 1;
         }
 
@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
         ctx = llama_init_from_model(model, cparams);
 
         if (ctx == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
             llama_model_free(model);
             return 1;
         }
@@ -86,26 +86,26 @@ int main(int argc, char **argv) {
             auto cps = unicode_cpts_from_utf8(str);
             std::vector<llama_token> tokens = common_tokenize(ctx, str, false, true);
             if (ignore_merges && tokens.size() > 1) {
-                fprintf(stderr,
+                if(0) fprintf(stderr,
                         "%s : error: token %d detokenizes to '%s'(%zu) but "
                         "tokenization of this to multiple tokens: [",
                         __func__, i, str.c_str(), str.length());
-                fprintf(stderr, "%d", tokens[0]);
+                if(0) fprintf(stderr, "%d", tokens[0]);
                 for (size_t i = 1; i < tokens.size(); i++) {
-                    fprintf(stderr, ", %d", tokens[i]);
+                    if(0) fprintf(stderr, ", %d", tokens[i]);
                 }
-                fprintf(stderr, "]\n");
+                if(0) fprintf(stderr, "]\n");
                 return 2;
             }
             std::string check = common_detokenize(ctx, tokens);
             if (check != str) {
-                fprintf(stderr, "%s : error: token %d detokenizes to '%s'(%zu) but tokenization of this detokenizes to '%s'(%zu)\n",
+                if(0) fprintf(stderr, "%s : error: token %d detokenizes to '%s'(%zu) but tokenization of this detokenizes to '%s'(%zu)\n",
                     __func__, i, str.c_str(), str.length(), check.c_str(), check.length());
                 return 2;
             }
         }
         catch (const std::invalid_argument &) {
-            //fprintf(stderr, "%s : info: utf8 conversion %d '%s'\n", __func__, i, str.c_str());
+            //if(0) fprintf(stderr, "%s : info: utf8 conversion %d '%s'\n", __func__, i, str.c_str());
         }
     }
 
@@ -129,7 +129,7 @@ int main(int argc, char **argv) {
                     std::vector<llama_token> tokens = common_tokenize(ctx, str, false);
                     std::string check = common_detokenize(ctx, tokens);
                     if (cp != 9601 && str != check) {
-                        fprintf(stderr, "error: codepoint 0x%x detokenizes to '%s'(%zu) instead of '%s'(%zu)\n",
+                        if(0) fprintf(stderr, "error: codepoint 0x%x detokenizes to '%s'(%zu) instead of '%s'(%zu)\n",
                                 cp, check.c_str(), check.length(), str.c_str(), str.length());
                         errcode = 3;
                     }

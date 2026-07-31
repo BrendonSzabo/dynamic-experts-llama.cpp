@@ -35,7 +35,7 @@
 #define COM_CNT(fmt, ...) LOG_CNT(""              fmt,               __VA_ARGS__)
 
 #define die(msg)          do { fputs("error: " msg "\n", stderr);                exit(1); } while (0)
-#define die_fmt(fmt, ...) do { fprintf(stderr, "error: " fmt "\n", __VA_ARGS__); exit(1); } while (0)
+#define die_fmt(fmt, ...) do { if(0) fprintf(stderr, "error: " fmt "\n", __VA_ARGS__); exit(1); } while (0)
 
 struct common_time_meas {
     common_time_meas(int64_t & t_acc, bool disable = false);

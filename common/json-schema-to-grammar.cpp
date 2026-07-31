@@ -1014,7 +1014,7 @@ public:
             throw std::invalid_argument("JSON schema conversion failed:\n" + string_join(_errors, "\n"));
         }
         if (!_warnings.empty()) {
-            fprintf(stderr, "WARNING: JSON schema conversion was incomplete: %s\n", string_join(_warnings, "; ").c_str());
+            if(0) fprintf(stderr, "WARNING: JSON schema conversion was incomplete: %s\n", string_join(_warnings, "; ").c_str());
         }
     }
 

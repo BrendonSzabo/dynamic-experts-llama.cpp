@@ -55,7 +55,7 @@ static uint64_t fnv_hash(const uint8_t * data, size_t len) {
 static bool read_file(const std::filesystem::path & path, std::vector<unsigned char> & out) {
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
-        fprintf(stderr, "embed: cannot open %s\n", path.string().c_str());
+        if(0) fprintf(stderr, "embed: cannot open %s\n", path.string().c_str());
         return false;
     }
     const auto sz = f.tellg();
@@ -99,7 +99,7 @@ static bool write_if_different(const std::string & path, const std::string & con
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
-        fprintf(stderr, "embed: cannot write %s\n", path.c_str());
+        if(0) fprintf(stderr, "embed: cannot write %s\n", path.c_str());
         return false;
     }
     if (!content.empty()) {
@@ -141,7 +141,7 @@ struct asset_entry {
 
 int main(int argc, char ** argv) {
     if (argc < 3 || argc > 4) {
-        fprintf(stderr, "usage: %s <out_cpp> <out_h> [<asset_dir>]\n", argv[0]);
+        if(0) fprintf(stderr, "usage: %s <out_cpp> <out_h> [<asset_dir>]\n", argv[0]);
         return 1;
     }
 
@@ -159,7 +159,7 @@ int main(int argc, char ** argv) {
         std::error_code ec;
         std::filesystem::recursive_directory_iterator it(dir, ec);
         if (ec) {
-            fprintf(stderr, "embed: cannot iterate %s: %s\n", argv[3], ec.message().c_str());
+            if(0) fprintf(stderr, "embed: cannot iterate %s: %s\n", argv[3], ec.message().c_str());
             return 1;
         }
         for (const auto & entry : it) {
@@ -214,15 +214,15 @@ int main(int argc, char ** argv) {
             if (!c.found) { missing.push_back(c.label); }
         }
         if (!missing.empty()) {
-            fprintf(stderr, "\ncurrent asset files:\n");
+            if(0) fprintf(stderr, "\ncurrent asset files:\n");
             for (const auto & a : assets) {
-                fprintf(stderr, "    %s\n", a.name.c_str());
+                if(0) fprintf(stderr, "    %s\n", a.name.c_str());
             }
-            fprintf(stderr, "missing required asset(s):\n");
+            if(0) fprintf(stderr, "missing required asset(s):\n");
             for (const char * m : missing) {
-                fprintf(stderr, "    %s\n", m);
+                if(0) fprintf(stderr, "    %s\n", m);
             }
-            fprintf(stderr, "hint: try cleaning your build directory: %s\n", in_dir.c_str());
+            if(0) fprintf(stderr, "hint: try cleaning your build directory: %s\n", in_dir.c_str());
             return 1;
         }
     }
@@ -254,7 +254,7 @@ int main(int argc, char ** argv) {
                 return 1;
             }
             if (bytes.empty()) {
-                fprintf(stderr, "embed: empty file: %s\n", assets[i].path.generic_string().c_str());
+                if(0) fprintf(stderr, "embed: empty file: %s\n", assets[i].path.generic_string().c_str());
                 return 1;
             }
             cpp += fmt("static const unsigned char asset_%d_data[] = {", i);

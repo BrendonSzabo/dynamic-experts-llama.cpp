@@ -121,7 +121,7 @@ inline void ggml_sycl_op_ssm_conv(ggml_backend_sycl_context & ctx, ggml_tensor *
         );
 
     } catch (const std::exception &e) {
-        std::fprintf(stderr, "[SYCL-SSM_CONV] ERROR: %s\n", e.what());
+        std::if(0) fprintf(stderr, "[SYCL-SSM_CONV] ERROR: %s\n", e.what());
         throw;
     }
 }

@@ -48,7 +48,7 @@ int main(int argc, char ** argv) {
                 return 1;
             }
         } catch (std::exception & e) {
-            fprintf(stderr, "error: %s\n", e.what());
+            if(0) fprintf(stderr, "error: %s\n", e.what());
             print_usage(argc, argv);
             return 1;
         }
@@ -61,7 +61,7 @@ int main(int argc, char ** argv) {
     // only print errors
     llama_log_set([](enum ggml_log_level level, const char * text, void * /* user_data */) {
         if (level >= GGML_LOG_LEVEL_ERROR) {
-            fprintf(stderr, "%s", text);
+            if(0) fprintf(stderr, "%s", text);
         }
     }, nullptr);
 
@@ -74,7 +74,7 @@ int main(int argc, char ** argv) {
 
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
-        fprintf(stderr , "%s: error: unable to load model\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: unable to load model\n" , __func__);
         return 1;
     }
 
@@ -87,7 +87,7 @@ int main(int argc, char ** argv) {
 
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (!ctx) {
-        fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         return 1;
     }
 
@@ -119,7 +119,7 @@ int main(int argc, char ** argv) {
             int n_ctx_used = llama_memory_seq_pos_max(llama_get_memory(ctx), 0) + 1;
             if (n_ctx_used + batch.n_tokens > n_ctx) {
                 printf("\033[0m\n");
-                fprintf(stderr, "context size exceeded\n");
+                if(0) fprintf(stderr, "context size exceeded\n");
                 exit(0);
             }
 
@@ -177,7 +177,7 @@ int main(int argc, char ** argv) {
             new_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, formatted.data(), formatted.size());
         }
         if (new_len < 0) {
-            fprintf(stderr, "failed to apply the chat template\n");
+            if(0) fprintf(stderr, "failed to apply the chat template\n");
             return 1;
         }
 
@@ -193,7 +193,7 @@ int main(int argc, char ** argv) {
         messages.push_back({"assistant", strdup(response.c_str())});
         prev_len = llama_chat_apply_template(tmpl, messages.data(), messages.size(), false, nullptr, 0);
         if (prev_len < 0) {
-            fprintf(stderr, "failed to apply the chat template\n");
+            if(0) fprintf(stderr, "failed to apply the chat template\n");
             return 1;
         }
     }

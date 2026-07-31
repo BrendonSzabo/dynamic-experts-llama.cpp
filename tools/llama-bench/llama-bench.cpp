@@ -661,7 +661,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                     try {
                         params.devices.push_back(parse_devices_arg(combo));
                     } catch (const std::exception & e) {
-                        fprintf(stderr, "error: %s\n", e.what());
+                        if(0) fprintf(stderr, "error: %s\n", e.what());
                         invalid_param = true;
                         break;
                     }
@@ -722,7 +722,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 try {
                     register_rpc_server_list(argv[i]);
                 } catch (const std::exception & e) {
-                    fprintf(stderr, "error: %s\n", e.what());
+                    if(0) fprintf(stderr, "error: %s\n", e.what());
                     invalid_param = true;
                     break;
                 }
@@ -1061,14 +1061,14 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 break;
             }
         } catch (const std::exception & e) {
-            fprintf(stderr, "error: %s\n", e.what());
+            if(0) fprintf(stderr, "error: %s\n", e.what());
             invalid_param = true;
             break;
         }
     }
 
     if (invalid_param) {
-        fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
+        if(0) fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
         print_usage(argc, argv);
         exit(1);
     }
@@ -1087,7 +1087,7 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
             common_models_handler models_handler = common_models_handler_init(p, LLAMA_EXAMPLE_BENCH);
             common_models_handler_apply(models_handler, p);
             if (p.model.path.empty()) {
-                fprintf(stderr, "error: failed to download model from HuggingFace\n");
+                if(0) fprintf(stderr, "error: failed to download model from HuggingFace\n");
                 exit(1);
             }
 
@@ -2128,7 +2128,7 @@ static bool test_prompt(llama_context * ctx, int n_prompt, int n_batch, int n_th
         }
         int res = llama_decode(ctx, llama_batch_get_one(tokens.data(), n_tokens));
         if (res != 0) {
-            fprintf(stderr, "%s: failed to decode prompt batch, res = %d\n", __func__, res);
+            if(0) fprintf(stderr, "%s: failed to decode prompt batch, res = %d\n", __func__, res);
             return false;
         }
         n_processed += n_tokens;
@@ -2150,7 +2150,7 @@ static bool test_gen(llama_context * ctx, int n_gen, int n_threads) {
     for (int i = 0; i < n_gen; i++) {
         int res = llama_decode(ctx, llama_batch_get_one(&token, 1));
         if (res != 0) {
-            fprintf(stderr, "%s: failed to decode generation batch, res = %d\n", __func__, res);
+            if(0) fprintf(stderr, "%s: failed to decode generation batch, res = %d\n", __func__, res);
             return false;
         }
         llama_synchronize(ctx);
@@ -2192,15 +2192,15 @@ int llama_bench(int argc, char ** argv) {
     std::setlocale(LC_CTYPE, ".UTF-8");
 
 #if !defined(NDEBUG)
-    fprintf(stderr, "warning: asserts enabled, performance may be affected\n");
+    if(0) fprintf(stderr, "warning: asserts enabled, performance may be affected\n");
 #endif
 
 #if (defined(_MSC_VER) && defined(_DEBUG)) || (!defined(_MSC_VER) && !defined(__OPTIMIZE__))
-    fprintf(stderr, "warning: debug build, performance may be affected\n");
+    if(0) fprintf(stderr, "warning: debug build, performance may be affected\n");
 #endif
 
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
-    fprintf(stderr, "warning: sanitizer enabled, performance may be affected\n");
+    if(0) fprintf(stderr, "warning: sanitizer enabled, performance may be affected\n");
 #endif
 
     // initialize backends
@@ -2210,7 +2210,7 @@ int llama_bench(int argc, char ** argv) {
 
     auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
     if (!cpu_dev) {
-        fprintf(stderr, "%s: error: CPU backend is not loaded\n", __func__);
+        if(0) fprintf(stderr, "%s: error: CPU backend is not loaded\n", __func__);
         return 1;
     }
     auto * cpu_reg = ggml_backend_dev_backend_reg(cpu_dev);
@@ -2225,7 +2225,7 @@ int llama_bench(int argc, char ** argv) {
     llama_numa_init(params.numa);
 
     if (!set_process_priority(params.prio)) {
-        fprintf(stderr, "%s: error: failed to set process priority\n", __func__);
+        if(0) fprintf(stderr, "%s: error: failed to set process priority\n", __func__);
         return 1;
     }
 
@@ -2257,7 +2257,7 @@ int llama_bench(int argc, char ** argv) {
     for (const auto & inst : params_instances) {
         params_idx++;
         if (params.progress) {
-            fprintf(stderr, "llama-bench: benchmark %d/%zu: starting\n", params_idx, params_count);
+            if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: starting\n", params_idx, params_count);
         }
         auto mparams = inst.to_llama_mparams();
         auto cparams = inst.to_llama_cparams();
@@ -2303,7 +2303,7 @@ int llama_bench(int argc, char ** argv) {
 
             lmodel = llama_model_load_from_file(inst.model.c_str(), mparams);
             if (lmodel == NULL) {
-                fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, inst.model.c_str());
+                if(0) fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, inst.model.c_str());
                 return 1;
             }
             prev_inst = &inst;
@@ -2311,7 +2311,7 @@ int llama_bench(int argc, char ** argv) {
 
         llama_context * ctx = llama_init_from_model(lmodel, cparams);
         if (ctx == NULL) {
-            fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, inst.model.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, inst.model.c_str());
             llama_model_free(lmodel);
             return 1;
         }
@@ -2327,7 +2327,7 @@ int llama_bench(int argc, char ** argv) {
 
         struct ggml_threadpool_params tpp = ggml_threadpool_params_default(t.n_threads);
         if (!parse_cpu_mask(t.cpu_mask, tpp.cpumask)) {
-            fprintf(stderr, "%s: failed to parse cpu-mask: %s\n", __func__, t.cpu_mask.c_str());
+            if(0) fprintf(stderr, "%s: failed to parse cpu-mask: %s\n", __func__, t.cpu_mask.c_str());
             llama_free(ctx);
             llama_model_free(lmodel);
             exit(1);
@@ -2338,7 +2338,7 @@ int llama_bench(int argc, char ** argv) {
 
         struct ggml_threadpool * threadpool = ggml_threadpool_new_fn(&tpp);
         if (!threadpool) {
-            fprintf(stderr, "%s: threadpool create failed : n_threads %d\n", __func__, tpp.n_threads);
+            if(0) fprintf(stderr, "%s: threadpool create failed : n_threads %d\n", __func__, tpp.n_threads);
             llama_free(ctx);
             llama_model_free(lmodel);
             exit(1);
@@ -2350,12 +2350,12 @@ int llama_bench(int argc, char ** argv) {
         if (!params.no_warmup) {
             if (t.n_prompt > 0) {
                 if (params.progress) {
-                    fprintf(stderr, "llama-bench: benchmark %d/%zu: warmup prompt run\n", params_idx, params_count);
+                    if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: warmup prompt run\n", params_idx, params_count);
                 }
                 //test_prompt(ctx, std::min(t.n_batch, std::min(t.n_prompt, 32)), 0, t.n_batch, t.n_threads);
                 bool res = test_prompt(ctx, t.n_prompt, t.n_batch, t.n_threads);
                 if (!res) {
-                    fprintf(stderr, "%s: error: failed to run prompt warmup\n", __func__);
+                    if(0) fprintf(stderr, "%s: error: failed to run prompt warmup\n", __func__);
                     llama_free(ctx);
                     llama_model_free(lmodel);
                     exit(1);
@@ -2363,11 +2363,11 @@ int llama_bench(int argc, char ** argv) {
             }
             if (t.n_gen > 0) {
                 if (params.progress) {
-                    fprintf(stderr, "llama-bench: benchmark %d/%zu: warmup generation run\n", params_idx, params_count);
+                    if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: warmup generation run\n", params_idx, params_count);
                 }
                 bool res = test_gen(ctx, 1, t.n_threads);
                 if (!res) {
-                    fprintf(stderr, "%s: error: failed to run gen warmup\n", __func__);
+                    if(0) fprintf(stderr, "%s: error: failed to run gen warmup\n", __func__);
                     llama_free(ctx);
                     llama_model_free(lmodel);
                     exit(1);
@@ -2392,12 +2392,12 @@ int llama_bench(int argc, char ** argv) {
 
                 if (!is_cached) {
                     if (params.progress) {
-                        fprintf(stderr, "llama-bench: benchmark %d/%zu: depth run %d/%d\n", params_idx, params_count,
+                        if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: depth run %d/%d\n", params_idx, params_count,
                                 i + 1, params.reps);
                     }
                     bool res = test_prompt(ctx, t.n_depth, t.n_batch, t.n_threads);
                     if (!res) {
-                        fprintf(stderr, "%s: error: failed to run depth\n", __func__);
+                        if(0) fprintf(stderr, "%s: error: failed to run depth\n", __func__);
                         llama_free(ctx);
                         llama_model_free(lmodel);
                         exit(1);
@@ -2409,7 +2409,7 @@ int llama_bench(int argc, char ** argv) {
                     llama_state_seq_get_data(ctx, cstate.buf.data(), cstate.buf.size(), 0);
                 } else {
                     if (params.progress) {
-                        fprintf(stderr, "llama-bench: benchmark %d/%zu: depth run %d/%d (cached)\n", params_idx, params_count,
+                        if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: depth run %d/%d (cached)\n", params_idx, params_count,
                                 i + 1, params.reps);
                     }
                 }
@@ -2419,12 +2419,12 @@ int llama_bench(int argc, char ** argv) {
 
             if (t.n_prompt > 0) {
                 if (params.progress) {
-                    fprintf(stderr, "llama-bench: benchmark %d/%zu: prompt run %d/%d\n", params_idx, params_count,
+                    if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: prompt run %d/%d\n", params_idx, params_count,
                             i + 1, params.reps);
                 }
                 bool res = test_prompt(ctx, t.n_prompt, t.n_batch, t.n_threads);
                 if (!res) {
-                    fprintf(stderr, "%s: error: failed to run prompt\n", __func__);
+                    if(0) fprintf(stderr, "%s: error: failed to run prompt\n", __func__);
                     llama_free(ctx);
                     llama_model_free(lmodel);
                     exit(1);
@@ -2432,12 +2432,12 @@ int llama_bench(int argc, char ** argv) {
             }
             if (t.n_gen > 0) {
                 if (params.progress) {
-                    fprintf(stderr, "llama-bench: benchmark %d/%zu: generation run %d/%d\n", params_idx, params_count,
+                    if(0) fprintf(stderr, "llama-bench: benchmark %d/%zu: generation run %d/%d\n", params_idx, params_count,
                             i + 1, params.reps);
                 }
                 bool res = test_gen(ctx, t.n_gen, t.n_threads);
                 if (!res) {
-                    fprintf(stderr, "%s: error: failed to run gen\n", __func__);
+                    if(0) fprintf(stderr, "%s: error: failed to run gen\n", __func__);
                     llama_free(ctx);
                     llama_model_free(lmodel);
                     exit(1);

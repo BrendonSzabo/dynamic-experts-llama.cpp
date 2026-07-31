@@ -309,7 +309,7 @@ static std::vector<std::string> ctrlvec_load_prompt_file(std::string path, bool 
     std::vector<std::string> output;
     std::ifstream file(path);
     if (!file.is_open()) {
-        fprintf(stderr, "error: unable to open file: %s\n", path.c_str());
+        if(0) fprintf(stderr, "error: unable to open file: %s\n", path.c_str());
         exit(1);
     }
     std::string line;
@@ -347,7 +347,7 @@ static bool cb_eval(struct ggml_tensor * t, bool ask, void * user_data) {
 static bool get_hidden_layers(llama_context * ctx, std::vector<llama_token> & tokens) {
     llama_memory_clear(llama_get_memory(ctx), true);
     if (llama_decode(ctx, llama_batch_get_one(tokens.data(), tokens.size()))) {
-        fprintf(stderr, "%s : failed to eval\n", __func__);
+        if(0) fprintf(stderr, "%s : failed to eval\n", __func__);
         return false;
     }
     return true;
@@ -382,11 +382,11 @@ static int prepare_entries(common_params & params, train_context & ctx_train) {
     std::vector<std::string> positive_prompts = ctrlvec_load_prompt_file(params.cvector_positive_file, true);
     std::vector<std::string> negative_prompts = ctrlvec_load_prompt_file(params.cvector_negative_file, true);
     if (positive_prompts.size() != negative_prompts.size()) {
-        fprintf(stderr, "number of positive and negative prompts must be equal\n");
+        if(0) fprintf(stderr, "number of positive and negative prompts must be equal\n");
         return 1;
     }
     if (positive_prompts.empty()) {
-        fprintf(stderr, "must provide at least one prompt pair\n");
+        if(0) fprintf(stderr, "must provide at least one prompt pair\n");
         return 1;
     }
     ctx_train.positive_entries = positive_prompts;
@@ -408,7 +408,7 @@ int main(int argc, char ** argv) {
     }
 
     if (params.n_pca_iterations % params.n_pca_batch != 0) {
-        fprintf(stderr, "PCA iterations must by multiply of PCA batch size\n");
+        if(0) fprintf(stderr, "PCA iterations must by multiply of PCA batch size\n");
         return 1;
     }
 

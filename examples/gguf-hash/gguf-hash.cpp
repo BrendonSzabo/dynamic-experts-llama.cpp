@@ -195,7 +195,7 @@ static bool hash_params_parse(int argc, const char ** argv, hash_params & params
         hash_params_parse_ex(argc, argv, params);
     }
     catch (const std::invalid_argument & ex) {
-        fprintf(stderr, "%s\n", ex.what());
+        if(0) fprintf(stderr, "%s\n", ex.what());
         hash_print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }

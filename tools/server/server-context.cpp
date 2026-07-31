@@ -992,7 +992,7 @@ private:
     // load the model and initialize llama_context
     // this may also be called to resume from sleeping state
      bool load_model(common_params & params) {
-        fprintf(stderr, "dyn-ex phase: server load_model start\n");
+        if(0) fprintf(stderr, "dyn-ex phase: server load_model start\n");
         load_progress_data load_progress_text  (this, "text_model");
         load_progress_data load_progress_mmproj(this, "mmproj_model");
         load_progress_data load_progress_spec  (this, "spec_model");
@@ -1137,9 +1137,9 @@ private:
             params_base.load_progress_callback_user_data = &load_progress_text;
         }
 
-        fprintf(stderr, "dyn-ex phase: calling common_init_from_params\n");
+        if(0) fprintf(stderr, "dyn-ex phase: calling common_init_from_params\n");
         llama_init = common_init_from_params(params_base);
-        fprintf(stderr, "dyn-ex phase: common_init_from_params done\n"); fflush(stderr);
+        if(0) fprintf(stderr, "dyn-ex phase: common_init_from_params done\n"); fflush(stderr);
 
         model_tgt = llama_init->model();
         ctx_tgt   = llama_init->context();
@@ -1386,7 +1386,7 @@ private:
             callback_state(SERVER_STATE_READY, {});
         }
 
-        fprintf(stderr, "dyn-ex phase: load_model returning true\n"); fflush(stderr);
+        if(0) fprintf(stderr, "dyn-ex phase: load_model returning true\n"); fflush(stderr);
         return true;
     }
 

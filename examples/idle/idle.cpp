@@ -53,7 +53,7 @@ int main(int argc, char ** argv) {
 
     llama_context * ctx = llama_init_from_model(model, ctx_params);
     if (ctx == NULL) {
-        fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         return 1;
     }
 

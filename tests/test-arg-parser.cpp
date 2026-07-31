@@ -27,7 +27,7 @@ static void test(void) {
                     if (seen_args.find(arg) == seen_args.end()) {
                         seen_args.insert(arg);
                     } else {
-                        fprintf(stderr, "test-arg-parser: found different handlers for the same argument: %s", arg.c_str());
+                        if(0) fprintf(stderr, "test-arg-parser: found different handlers for the same argument: %s", arg.c_str());
                         exit(1);
                     }
                 }
@@ -36,7 +36,7 @@ static void test(void) {
                     if (seen_env_vars.find(env) == seen_env_vars.end()) {
                         seen_env_vars.insert(env);
                     } else {
-                        fprintf(stderr, "test-arg-parser: found different handlers for the same env var: %s", env.c_str());
+                        if(0) fprintf(stderr, "test-arg-parser: found different handlers for the same env var: %s", env.c_str());
                         exit(1);
                     }
                 }
@@ -51,7 +51,7 @@ static void test(void) {
                     const std::string last(opt.args.back());
 
                     if (first.length() > last.length()) {
-                        fprintf(stderr, "test-arg-parser: shorter argument should come before longer one: %s, %s\n",
+                        if(0) fprintf(stderr, "test-arg-parser: shorter argument should come before longer one: %s, %s\n",
                                 first.c_str(), last.c_str());
                         assert(false);
                     }
@@ -63,7 +63,7 @@ static void test(void) {
                     const std::string last(opt.args_neg.back());
 
                     if (first.length() > last.length()) {
-                        fprintf(stderr, "test-arg-parser: shorter negated argument should come before longer one: %s, %s\n",
+                        if(0) fprintf(stderr, "test-arg-parser: shorter negated argument should come before longer one: %s, %s\n",
                                 first.c_str(), last.c_str());
                         assert(false);
                     }
@@ -258,7 +258,7 @@ int main(void) {
     try {
         test();
     } catch (std::exception & e) {
-        fprintf(stderr, "test-arg-parser: exception: %s\n", e.what());
+        if(0) fprintf(stderr, "test-arg-parser: exception: %s\n", e.what());
         return 1;
     }
     return 0;

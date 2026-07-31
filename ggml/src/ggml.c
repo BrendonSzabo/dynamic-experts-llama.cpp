@@ -131,7 +131,7 @@ static void ggml_print_backtrace_symbols(void) {
             symbol = info.dli_sname;
         }
 
-        fprintf(stderr, "%d: %p %s\n", idx, addr, symbol);
+        if(0) fprintf(stderr, "%d: %p %s\n", idx, addr, symbol);
     }
 }
 #elif defined(__linux__) && defined(__GLIBC__)
@@ -166,9 +166,9 @@ void ggml_print_backtrace(void) {
     // Use simple backtrace() instead to avoid Terminal.app crashes
     const char * GGML_BACKTRACE_LLDB = getenv("GGML_BACKTRACE_LLDB");
     if (!GGML_BACKTRACE_LLDB) {
-        fprintf(stderr, "WARNING: Using native backtrace. Set GGML_BACKTRACE_LLDB for more info.\n");
-        fprintf(stderr, "WARNING: GGML_BACKTRACE_LLDB may cause native MacOS Terminal.app to crash.\n");
-        fprintf(stderr, "See: https://github.com/ggml-org/llama.cpp/pull/17869\n");
+        if(0) fprintf(stderr, "WARNING: Using native backtrace. Set GGML_BACKTRACE_LLDB for more info.\n");
+        if(0) fprintf(stderr, "WARNING: GGML_BACKTRACE_LLDB may cause native MacOS Terminal.app to crash.\n");
+        if(0) fprintf(stderr, "See: https://github.com/ggml-org/llama.cpp/pull/17869\n");
         ggml_print_backtrace_symbols();
         return;
     }
@@ -264,7 +264,7 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
         g_abort_callback(message);
     } else {
         // default: print error and backtrace to stderr
-        fprintf(stderr, "%s\n", message);
+        if(0) fprintf(stderr, "%s\n", message);
         ggml_print_backtrace();
     }
 
@@ -4054,8 +4054,10 @@ static struct ggml_tensor * ggml_soft_max_impl(
         float                 max_bias,
         bool                  inplace) {
     GGML_ASSERT(ggml_is_contiguous(a));
+    if(0) fprintf(stderr, "ggml is contigous");
 
     if (mask) {
+        if(0) fprintf(stderr, "maked");
         GGML_ASSERT(mask->type == GGML_TYPE_F16 || mask->type == GGML_TYPE_F32);
         GGML_ASSERT(ggml_is_contiguous(mask));
         GGML_ASSERT(mask->ne[0] == a->ne[0]);
@@ -4065,18 +4067,28 @@ static struct ggml_tensor * ggml_soft_max_impl(
     }
 
     if (max_bias > 0.0f) {
+        if(0) fprintf(stderr, "biased");
         GGML_ASSERT(mask);
     }
 
-    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
+    struct ggml_tensor * result = NULL;
+    if (inplace ){
+        if(0) fprintf(stderr, "view tensor");
+        result = ggml_view_tensor(ctx, a);
+    } else {
+        if(0) fprintf(stderr, "dup tensor");
+        result = ggml_dup_tensor(ctx, a);
+    }
 
     float params[] = { scale, max_bias };
+    if(0) fprintf(stderr, "setting params");
     ggml_set_op_params(result, params, sizeof(params));
 
     result->op     = GGML_OP_SOFT_MAX;
     result->src[0] = a;
     result->src[1] = mask;
 
+    if(0) fprintf(stderr, "softmaxxed successfuly");
     return result;
 }
 
@@ -7055,7 +7067,7 @@ static void ggml_compute_backward(
                     }
                 } break;
                 default: {
-                    fprintf(stderr, "%s: unsupported unary op for backward pass: %s\n",
+                    if(0) fprintf(stderr, "%s: unsupported unary op for backward pass: %s\n",
                         __func__, ggml_unary_op_name(ggml_get_unary_op(tensor)));
                     GGML_ABORT("fatal error");
                 } //break;

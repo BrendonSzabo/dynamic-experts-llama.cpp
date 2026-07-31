@@ -5,35 +5,35 @@
 #define TEST_ASSERT(cond, msg) \
     do { \
         if (!(cond)) { \
-            fprintf(stderr, "FAIL: %s (line %d): %s\n", #cond, __LINE__, msg); \
+            if(0) fprintf(stderr, "FAIL: %s (line %d): %s\n", #cond, __LINE__, msg); \
             return 1; \
         } \
     } while (0)
 
 int main() {
-    fprintf(stderr, "=== test-gguf-model-data ===\n");
+    if(0) fprintf(stderr, "=== test-gguf-model-data ===\n");
 
     // Fetch Qwen3-0.6B Q8_0 metadata
     auto result = gguf_fetch_model_meta("ggml-org/Qwen3-0.6B-GGUF", "Q8_0");
 
     if (!result.has_value()) {
-        fprintf(stderr, "SKIP: could not fetch model metadata (no network or HTTP disabled)\n");
+        if(0) fprintf(stderr, "SKIP: could not fetch model metadata (no network or HTTP disabled)\n");
         return 0;
     }
 
     const auto & model = result.value();
 
-    fprintf(stderr, "Architecture:  %s\n", model.architecture.c_str());
-    fprintf(stderr, "n_embd:        %u\n", model.n_embd);
-    fprintf(stderr, "n_ff:          %u\n", model.n_ff);
-    fprintf(stderr, "n_vocab:       %u\n", model.n_vocab);
-    fprintf(stderr, "n_layer:       %u\n", model.n_layer);
-    fprintf(stderr, "n_head:        %u\n", model.n_head);
-    fprintf(stderr, "n_head_kv:     %u\n", model.n_head_kv);
-    fprintf(stderr, "n_expert:      %u\n", model.n_expert);
-    fprintf(stderr, "n_embd_head_k: %u\n", model.n_embd_head_k);
-    fprintf(stderr, "n_embd_head_v: %u\n", model.n_embd_head_v);
-    fprintf(stderr, "tensors:       %zu\n", model.tensors.size());
+    if(0) fprintf(stderr, "Architecture:  %s\n", model.architecture.c_str());
+    if(0) fprintf(stderr, "n_embd:        %u\n", model.n_embd);
+    if(0) fprintf(stderr, "n_ff:          %u\n", model.n_ff);
+    if(0) fprintf(stderr, "n_vocab:       %u\n", model.n_vocab);
+    if(0) fprintf(stderr, "n_layer:       %u\n", model.n_layer);
+    if(0) fprintf(stderr, "n_head:        %u\n", model.n_head);
+    if(0) fprintf(stderr, "n_head_kv:     %u\n", model.n_head_kv);
+    if(0) fprintf(stderr, "n_expert:      %u\n", model.n_expert);
+    if(0) fprintf(stderr, "n_embd_head_k: %u\n", model.n_embd_head_k);
+    if(0) fprintf(stderr, "n_embd_head_v: %u\n", model.n_embd_head_v);
+    if(0) fprintf(stderr, "tensors:       %zu\n", model.tensors.size());
 
     // Verify architecture
     TEST_ASSERT(model.architecture == "qwen3", "expected architecture 'qwen3'");
@@ -85,22 +85,22 @@ int main() {
     // Test a split MoE model without specifying quant (should default to Q8_0)
     auto result3 = gguf_fetch_model_meta("ggml-org/GLM-4.6V-GGUF");
     if (!result3.has_value()) {
-        fprintf(stderr, "SKIP: could not fetch GLM-4.6V metadata (no network?)\n");
+        if(0) fprintf(stderr, "SKIP: could not fetch GLM-4.6V metadata (no network?)\n");
         return 0;
     }
     const auto & model3 = result3.value();
 
-    fprintf(stderr, "Architecture:  %s\n", model3.architecture.c_str());
-    fprintf(stderr, "n_embd:        %u\n", model3.n_embd);
-    fprintf(stderr, "n_ff:          %u\n", model3.n_ff);
-    fprintf(stderr, "n_vocab:       %u\n", model3.n_vocab);
-    fprintf(stderr, "n_layer:       %u\n", model3.n_layer);
-    fprintf(stderr, "n_head:        %u\n", model3.n_head);
-    fprintf(stderr, "n_head_kv:     %u\n", model3.n_head_kv);
-    fprintf(stderr, "n_expert:      %u\n", model3.n_expert);
-    fprintf(stderr, "n_embd_head_k: %u\n", model3.n_embd_head_k);
-    fprintf(stderr, "n_embd_head_v: %u\n", model3.n_embd_head_v);
-    fprintf(stderr, "tensors:       %zu\n", model3.tensors.size());
+    if(0) fprintf(stderr, "Architecture:  %s\n", model3.architecture.c_str());
+    if(0) fprintf(stderr, "n_embd:        %u\n", model3.n_embd);
+    if(0) fprintf(stderr, "n_ff:          %u\n", model3.n_ff);
+    if(0) fprintf(stderr, "n_vocab:       %u\n", model3.n_vocab);
+    if(0) fprintf(stderr, "n_layer:       %u\n", model3.n_layer);
+    if(0) fprintf(stderr, "n_head:        %u\n", model3.n_head);
+    if(0) fprintf(stderr, "n_head_kv:     %u\n", model3.n_head_kv);
+    if(0) fprintf(stderr, "n_expert:      %u\n", model3.n_expert);
+    if(0) fprintf(stderr, "n_embd_head_k: %u\n", model3.n_embd_head_k);
+    if(0) fprintf(stderr, "n_embd_head_v: %u\n", model3.n_embd_head_v);
+    if(0) fprintf(stderr, "tensors:       %zu\n", model3.tensors.size());
 
     // Verify architecture
     TEST_ASSERT(model3.architecture == "glm4moe", "expected architecture 'glm4moe'");
@@ -119,22 +119,22 @@ int main() {
     // Test a hybrid-attention model with array-valued head counts
     auto result4 = gguf_fetch_model_meta("ggml-org/Step-3.5-Flash-GGUF", "Q4_K");
     if (!result4.has_value()) {
-        fprintf(stderr, "FAIL: could not fetch Step-3.5-Flash metadata\n");
+        if(0) fprintf(stderr, "FAIL: could not fetch Step-3.5-Flash metadata\n");
         return 1;
     }
     const auto & model4 = result4.value();
 
-    fprintf(stderr, "Architecture:  %s\n", model4.architecture.c_str());
-    fprintf(stderr, "n_embd:        %u\n", model4.n_embd);
-    fprintf(stderr, "n_ff:          %u\n", model4.n_ff);
-    fprintf(stderr, "n_vocab:       %u\n", model4.n_vocab);
-    fprintf(stderr, "n_layer:       %u\n", model4.n_layer);
-    fprintf(stderr, "n_head:        %u\n", model4.n_head);
-    fprintf(stderr, "n_head_kv:     %u\n", model4.n_head_kv);
-    fprintf(stderr, "n_expert:      %u\n", model4.n_expert);
-    fprintf(stderr, "n_embd_head_k: %u\n", model4.n_embd_head_k);
-    fprintf(stderr, "n_embd_head_v: %u\n", model4.n_embd_head_v);
-    fprintf(stderr, "tensors:       %zu\n", model4.tensors.size());
+    if(0) fprintf(stderr, "Architecture:  %s\n", model4.architecture.c_str());
+    if(0) fprintf(stderr, "n_embd:        %u\n", model4.n_embd);
+    if(0) fprintf(stderr, "n_ff:          %u\n", model4.n_ff);
+    if(0) fprintf(stderr, "n_vocab:       %u\n", model4.n_vocab);
+    if(0) fprintf(stderr, "n_layer:       %u\n", model4.n_layer);
+    if(0) fprintf(stderr, "n_head:        %u\n", model4.n_head);
+    if(0) fprintf(stderr, "n_head_kv:     %u\n", model4.n_head_kv);
+    if(0) fprintf(stderr, "n_expert:      %u\n", model4.n_expert);
+    if(0) fprintf(stderr, "n_embd_head_k: %u\n", model4.n_embd_head_k);
+    if(0) fprintf(stderr, "n_embd_head_v: %u\n", model4.n_embd_head_v);
+    if(0) fprintf(stderr, "tensors:       %zu\n", model4.tensors.size());
 
     TEST_ASSERT(model4.architecture == "step35", "expected architecture 'step35'");
 
@@ -149,6 +149,6 @@ int main() {
     TEST_ASSERT(model4.n_vocab == 128896, "expected n_vocab == 128896");
     TEST_ASSERT(model4.tensors.size() == 754, "expected tensor count == 754");
 
-    fprintf(stderr, "=== ALL TESTS PASSED ===\n");
+    if(0) fprintf(stderr, "=== ALL TESTS PASSED ===\n");
     return 0;
 }

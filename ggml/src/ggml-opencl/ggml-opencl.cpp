@@ -20702,7 +20702,7 @@ static void moe_router_reoerder(ggml_backend_t backend, const ggml_tensor * src,
         const int routings = ne20 * ne21;
         const int ideal    = (routings + n_tile_size - 1) / n_tile_size;
         const int slots     = h_total * n_tile_size;
-        fprintf(stderr, "[MOE_TILES] routings=%d (ne20=%d ne21=%d nexp=%d) total_tiles=%d ideal=%d slots=%d pad=%.1f%%\n",
+        if(0) fprintf(stderr, "[MOE_TILES] routings=%d (ne20=%d ne21=%d nexp=%d) total_tiles=%d ideal=%d slots=%d pad=%.1f%%\n",
                 routings, ne20, ne21, ne02, h_total, ideal, slots,
                 routings > 0 ? 100.0 * (slots - routings) / routings : 0.0);
         fflush(stderr);

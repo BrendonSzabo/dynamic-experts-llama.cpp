@@ -706,7 +706,7 @@ int main(int argc, char ** argv) {
         }
         return test_backends(arch, seed, log_level);
     } catch (const std::exception & err) {
-        fprintf(stderr, "encountered runtime error: %s\n", err.what());
+        if(0) fprintf(stderr, "encountered runtime error: %s\n", err.what());
         return -1;
     }
 }

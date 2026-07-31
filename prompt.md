@@ -341,10 +341,10 @@ Prefer conditional compilation (`#ifdef LLAMA_DYN_EX`) or runtime feature flags 
 
 ### What's been tried
 1. **Eval callback**: fires per compute GROUP not per node — barrier gets bundled
-2. **Two-pass inference**: pass 1 captures expert IDs, pass 2 uses them → layer dependency makes it wrong for token 1
+2. **Two-pass inference**: pass 1 captures expert IDs, pass 2 uses them → inherently flawed for multiple reasons. Not even worth thinking about.
 3. **Scheduler save/restore**: confirmed slot tensors don't change buffers
 4. **EXTERNAL flag on all tensors**: prevents scheduler copies but crashes CUDA assert (buft mismatch)
-5. **supports_buft fix**: accept any buft for same device → slot_map recognized as CUDA
+5. **supports_buft fix**: accept any buft for same device → slot_map recognized as CUDA (tech debt but okay for now)
 6. **supports_op for DYN_EX_BARRIER**: barrier assigned to CUDA → GPU spin deadlocks cudaMemcpy
 7. **raw_buf_write cudaMemcpyAsync on non-blocking stream**: fixed deadlock, CPU writes while GPU spins
 8. **dedup_bcast=false**: avoids scatter path but down matmul quantize gets wrong ne11_flat
@@ -357,8 +357,8 @@ Prefer conditional compilation (`#ifdef LLAMA_DYN_EX`) or runtime feature flags 
 - **Initial fill**: n_slots experts only (fast startup, barrier handles remainder)
 
 ### Next
-- Fix gate matmul crash: `ids_dst` corruption or scatter-inverse map issue
-- Or: use `dedup_bcast=false` AND fix the non-MoE down matmul ne11_flat
+- Fix gate matmul crash: `ids_dst` corruption or scatter-inverse map issue probably. Needs more log debugging.
+- Check if up, down and gate sizes match the expected since they arent the same size in q4_k_m
 
 Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NOT accidentally skip:
 - `token_embd.weight` (embeddings)
@@ -372,12 +372,14 @@ Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NO
 
 **Debug approach**: add logging to `load_all_data()` to print EVERY tensor name that is skipped. Verify the skip list contains ONLY expert tensors.
 
+**Note:** barrier is tech debt because it wastes cycles. Good enough for now.
+
 ---
 
 ## Lessons Learned
 
 ### Always use logging
-When debugging, add if(0) fprintf(stderr, ...) at every step. Never guess the flow. This session wasted hours on:
+When debugging, add fprintf(stderr, ...) at every step. Never guess the flow. Last session wasted hours on:
 - Believing scheduler reallocated buffers (it doesn't)
 - Believing callback fired for barrier nodes (it doesn't reach splits)
 - Believing two-pass could work (It doesn't because it wastes too much compute and is inherently a flawed idea)
@@ -385,9 +387,13 @@ When debugging, add if(0) fprintf(stderr, ...) at every step. Never guess the fl
 
 ### Always commit
 Commit small, commit often. Every working piece of infrastructure should be committed before moving to the next.
+Dont' be careless with 'git checkout'. There were too many times when the checkout reverted important stuff when the fix was a single line.
 
 ### The predictor is best-effort, not source of truth
 The graph's `ggml_argsort_top_k` is the actual expert selection. The MLP predictor is an optimization for prefetching — it guesses, the graph decides. Never use predictor output as `selected_experts_in`.
 
 ### Two-pass doesn't work
 We cannot say for sure what experts the next layer will need and running the same layer twice wastes insane amounts of compute.
+
+### Ask the user
+The user is here to be your critical thinking and workmate. You are not an assistand workhorse but a workmate. Co-operate. Not single player. If there is a decision that comes up then ask the user for their input. Always explain to the user properly don't half ass it.

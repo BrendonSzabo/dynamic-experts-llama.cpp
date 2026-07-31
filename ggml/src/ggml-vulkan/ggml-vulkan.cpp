@@ -190,7 +190,7 @@ static bool is_pow2(uint32_t x) { return x > 1 && (x & (x-1)) == 0; }
     do {                                                            \
         vk::Result err_ = (err);                                    \
         if (err_ != vk::Result::eSuccess) {                         \
-            fprintf(stderr, "ggml_vulkan: %s error %s at %s:%d\n",  \
+            if(0) fprintf(stderr, "ggml_vulkan: %s error %s at %s:%d\n",  \
                 #err, to_string(err_).c_str(), __FILE__, __LINE__); \
             exit(1);                                                \
         }                                                           \
@@ -2396,7 +2396,7 @@ static void ggml_vk_wait_for_fence(ggml_backend_vk_context * ctx) {
     vk::Result result;
     while ((result = ctx->device->device.getFenceStatus(ctx->fence)) != vk::Result::eSuccess) {
         if (result != vk::Result::eNotReady) {
-            fprintf(stderr, "ggml_vulkan: error %s at %s:%d\n", to_string(result).c_str(), __FILE__, __LINE__);
+            if(0) fprintf(stderr, "ggml_vulkan: error %s at %s:%d\n", to_string(result).c_str(), __FILE__, __LINE__);
             exit(1);
         }
         for (uint32_t i = 0; i < 100; ++i) {
@@ -7749,7 +7749,7 @@ static void * ggml_vk_host_malloc(vk_device& device, size_t size) {
          vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent});
 
     if(!(buf->memory_property_flags & vk::MemoryPropertyFlagBits::eHostVisible)) {
-        fprintf(stderr, "WARNING: failed to allocate %.2f MB of pinned memory\n",
+        if(0) fprintf(stderr, "WARNING: failed to allocate %.2f MB of pinned memory\n",
             size/1024.0/1024.0);
         device->device.freeMemory(buf->device_memory);
         device->device.destroyBuffer(buf->buffer);
@@ -7781,7 +7781,7 @@ static void ggml_vk_host_free(vk_device& device, void* ptr) {
         }
     }
     if (buf == nullptr) {
-        fprintf(stderr, "WARNING: failed to free pinned memory: memory not in map\n");
+        if(0) fprintf(stderr, "WARNING: failed to free pinned memory: memory not in map\n");
         return;
     }
 
@@ -13866,13 +13866,13 @@ static void ggml_vk_print_matrix_area(const void * data, ggml_type type, int ne0
     i0 = std::max(i0, 5);
     i1 = std::max(i1, 5);
     i2 = std::max(i2, 0);
-    fprintf(stderr, "         ");
+    if(0) fprintf(stderr, "         ");
     for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
-        fprintf(stderr, "%7d ", idx1);
+        if(0) fprintf(stderr, "%7d ", idx1);
     }
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
     for (int idx0 = i0 - 5; idx0 < i0 + 5; idx0++) {
-        fprintf(stderr, "%7d: ", idx0);
+        if(0) fprintf(stderr, "%7d: ", idx0);
         for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
             if (idx0 >= 0 && idx0 < ne0 && idx1 >= 0 && idx1 < ne1) {
                 float val;
@@ -13883,12 +13883,12 @@ static void ggml_vk_print_matrix_area(const void * data, ggml_type type, int ne0
                 } else {
                     GGML_ABORT("fatal error");
                 }
-                fprintf(stderr, "% 7.2f ", val);
+                if(0) fprintf(stderr, "% 7.2f ", val);
             } else {
-                fprintf(stderr, "        ");
+                if(0) fprintf(stderr, "        ");
             }
         }
-        fprintf(stderr, "\n");
+        if(0) fprintf(stderr, "\n");
     }
 }
 
@@ -14192,13 +14192,13 @@ static void ggml_vk_print_tensor_area(const ggml_tensor * tensor, int i0, int i1
     i1 = std::max(i1, 5);
     i2 = std::max(i2, 0);
     i3 = std::max(i3, 0);
-    fprintf(stderr, "         ");
+    if(0) fprintf(stderr, "         ");
     for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
-        fprintf(stderr, "%7d ", idx1);
+        if(0) fprintf(stderr, "%7d ", idx1);
     }
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
     for (int idx0 = i0 - 5; idx0 < i0 + 5; idx0++) {
-        fprintf(stderr, "%7d: ", idx0);
+        if(0) fprintf(stderr, "%7d: ", idx0);
         for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
             if (idx0 >= 0 && idx0 < tensor->ne[0] && idx1 >= 0 && idx1 < tensor->ne[1] && i2 >= 0 && i2 < tensor->ne[2] && i3 >= 0 && i3 < tensor->ne[3]) {
                 float val;
@@ -14209,12 +14209,12 @@ static void ggml_vk_print_tensor_area(const ggml_tensor * tensor, int i0, int i1
                 } else {
                     GGML_ABORT("fatal error");
                 }
-                fprintf(stderr, "% 7.2f ", val);
+                if(0) fprintf(stderr, "% 7.2f ", val);
             } else {
-                fprintf(stderr, "        ");
+                if(0) fprintf(stderr, "        ");
             }
         }
-        fprintf(stderr, "\n");
+        if(0) fprintf(stderr, "\n");
     }
 }
 
@@ -18433,13 +18433,13 @@ static void ggml_vk_print_tensor_area(const ggml_tensor * tensor, const void * d
     i1 = std::max(i1, 5);
     i2 = std::max(i2, 0);
     i3 = std::max(i3, 0);
-    fprintf(stderr, "         ");
+    if(0) fprintf(stderr, "         ");
     for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
-        fprintf(stderr, "%7d ", idx1);
+        if(0) fprintf(stderr, "%7d ", idx1);
     }
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
     for (int idx0 = i0 - 5; idx0 < i0 + 5; idx0++) {
-        fprintf(stderr, "%7d: ", idx0);
+        if(0) fprintf(stderr, "%7d: ", idx0);
         for (int idx1 = i1 - 5; idx1 < i1 + 5; idx1++) {
             if (idx0 >= 0 && idx0 < tensor->ne[0] && idx1 >= 0 && idx1 < tensor->ne[1] && i2 >= 0 && i2 < tensor->ne[2] && i3 >= 0 && i3 < tensor->ne[3]) {
                 float val;
@@ -18452,12 +18452,12 @@ static void ggml_vk_print_tensor_area(const ggml_tensor * tensor, const void * d
                 } else {
                     GGML_ABORT("fatal error");
                 }
-                fprintf(stderr, "% 7.2f ", val);
+                if(0) fprintf(stderr, "% 7.2f ", val);
             } else {
-                fprintf(stderr, "        ");
+                if(0) fprintf(stderr, "        ");
             }
         }
-        fprintf(stderr, "\n");
+        if(0) fprintf(stderr, "\n");
     }
 }
 

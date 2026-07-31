@@ -635,7 +635,7 @@ static uint32_t ggml_get_numa_affinity(void) {
 
 void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     if (g_state.numa.n_nodes > 0) {
-        fprintf(stderr, "ggml_numa_init: NUMA already initialized\n");
+        if(0) fprintf(stderr, "ggml_numa_init: NUMA already initialized\n");
 
         return;
     }
@@ -2038,15 +2038,15 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 int n_elements = (int)(src->ne[0] * src->ne[1]);
                 int32_t * buf = (int32_t *)tensor->data;
                 int n_total = (int)tensor->ne[0];
-                if(0)fprintf(stderr, "dyn-ex CPU: n_e=%d n_tot=%d buf=%p src=%p src_data=%p\n",
+                if(0) fprintf(stderr, "dyn-ex CPU: n_e=%d n_tot=%d buf=%p src=%p src_data=%p\n",
                         n_elements, n_total, (void*)buf, (void*)src, (void*)src->data);
                 buf[1] = n_elements;
                 memcpy(buf + 2, src->data, n_elements * sizeof(int32_t));
                 buf[n_total - 2] = 1;
-                if(0)fprintf(stderr, "dyn-ex CPU: wrote buf[1]=%d buf[2]=%d buf[3]=%d buf[4]=%d ready=%d data=%p\n",
+                if(0) fprintf(stderr, "dyn-ex CPU: wrote buf[1]=%d buf[2]=%d buf[3]=%d buf[4]=%d ready=%d data=%p\n",
                         buf[1], buf[2], buf[3], buf[4], buf[n_total-2], (void*)(buf+2));
                 while (buf[n_total - 1] == 0) {}
-                if(0)fprintf(stderr, "dyn-ex CPU: go!\n");
+                if(0) fprintf(stderr, "dyn-ex CPU: go!\n");
             } break;
         case GGML_OP_GET_REL_POS:
             {
@@ -2183,7 +2183,7 @@ static void set_numa_thread_affinity(int thread_n) {
             // use the cpuset that numactl gave us
             rv = pthread_setaffinity_np(pthread_self(), setsize, &g_state.numa.cpuset);
             if (rv) {
-                fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n",strerror(rv));
+                if(0) fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n",strerror(rv));
             }
             return;
         default:
@@ -2200,7 +2200,7 @@ static void set_numa_thread_affinity(int thread_n) {
 
     rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
     if (rv) {
-            fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
+            if(0) fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
     }
 
     CPU_FREE(cpus);
@@ -2221,7 +2221,7 @@ static void clear_numa_thread_affinity(void) {
 
     int rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
     if (rv) {
-        fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
+        if(0) fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
     }
 
     CPU_FREE(cpus);
@@ -2490,11 +2490,11 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
             }
         default:
             {
-                fprintf(stderr, "%s: op not implemented: ", __func__);
+                if(0) fprintf(stderr, "%s: op not implemented: ", __func__);
                 if (node->op < GGML_OP_COUNT) {
-                    fprintf(stderr, "%s\n", ggml_op_name(node->op));
+                    if(0) fprintf(stderr, "%s\n", ggml_op_name(node->op));
                 } else {
-                    fprintf(stderr, "%d\n", node->op);
+                    if(0) fprintf(stderr, "%d\n", node->op);
                 }
                 GGML_ABORT("fatal error");
             }
@@ -2533,7 +2533,7 @@ static bool ggml_thread_apply_affinity(bool * mask) {
 
     for (int32_t i = 64; i < GGML_MAX_N_THREADS; i++) {
         if (mask[i]) {
-            fprintf(stderr, "warn: setting thread-affinity for > 64 CPUs isn't supported on windows!\n");
+            if(0) fprintf(stderr, "warn: setting thread-affinity for > 64 CPUs isn't supported on windows!\n");
             break;
         }
     }
@@ -2582,7 +2582,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
     }
 
     if (!SetThreadPriority(GetCurrentThread(), p)) {
-        fprintf(stderr, "warn: failed to set thread priority %d : (%d)\n", prio, (int) GetLastError());
+        if(0) fprintf(stderr, "warn: failed to set thread priority %d : (%d)\n", prio, (int) GetLastError());
         return false;
     }
 
@@ -2618,7 +2618,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
 
     int32_t err = pthread_setschedparam(pthread_self(), policy, &p);
     if (err != 0) {
-        fprintf(stderr, "warn: failed to set thread priority %d : %s (%d)\n", prio, strerror(err), err);
+        if(0) fprintf(stderr, "warn: failed to set thread priority %d : %s (%d)\n", prio, strerror(err), err);
         return false;
     }
 
@@ -2650,7 +2650,7 @@ static bool ggml_thread_apply_affinity(const bool * mask) {
     err = pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset);
 #endif
     if (err != 0) {
-        fprintf(stderr, "warn: failed to set affinity mask 0x%llx : %s (%d)\n", (unsigned long long)mask, strerror(err), err);
+        if(0) fprintf(stderr, "warn: failed to set affinity mask 0x%llx : %s (%d)\n", (unsigned long long)mask, strerror(err), err);
         return false;
     }
 
@@ -2675,7 +2675,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
 
     int32_t err = pthread_setschedparam(pthread_self(), policy, &p);
     if (err != 0) {
-        fprintf(stderr, "warn: failed to set thread priority %d : %s (%d)\n", prio, strerror(err), err);
+        if(0) fprintf(stderr, "warn: failed to set thread priority %d : %s (%d)\n", prio, strerror(err), err);
         return false;
     }
 

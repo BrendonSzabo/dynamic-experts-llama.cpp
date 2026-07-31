@@ -34,7 +34,7 @@ struct cli_server {
     bool start(common_params & params) {
         port = common_http_get_free_port();
         if (port <= 0) {
-            fprintf(stderr, "failed to get a free port\n");
+            if(0) fprintf(stderr, "failed to get a free port\n");
             exit(1);
         }
 
@@ -47,7 +47,7 @@ struct cli_server {
             // argc / argv are only used in router mode, we can skip them for now
             int res = llama_server(server_params, 0, nullptr);
             if (res != 0) {
-                fprintf(stderr, "llama_server exited with code %d\n", res);
+                if(0) fprintf(stderr, "llama_server exited with code %d\n", res);
             }
             is_alive.store(false, std::memory_order_release);
         });

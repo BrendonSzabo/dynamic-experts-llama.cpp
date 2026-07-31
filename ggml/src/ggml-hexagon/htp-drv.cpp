@@ -268,7 +268,7 @@ static std::string get_driver_path() {
     LPQUERY_SERVICE_CONFIGW serviceConfig =
         static_cast<LPQUERY_SERVICE_CONFIGW>(LocalAlloc(LMEM_FIXED, bufferSize));
     if (!QueryServiceConfigW(schService, serviceConfig, bufferSize, &bufferSize)) {
-        fprintf(stderr, "ggml-hex: Failed to query service config. Error: %lu\n", GetLastError());
+        if(0) fprintf(stderr, "ggml-hex: Failed to query service config. Error: %lu\n", GetLastError());
         LocalFree(serviceConfig);
         CloseServiceHandle(schService);
         CloseServiceHandle(schSCManager);

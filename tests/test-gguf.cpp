@@ -1411,7 +1411,7 @@ int main(int argc, char ** argv) {
 
     // Initialize ggml backends early so the prints aren't interleaved with the test results:
     ggml_backend_dev_count();
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
 
     int npass = 0;
     int ntest = 0;

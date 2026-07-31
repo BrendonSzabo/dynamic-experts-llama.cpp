@@ -3275,7 +3275,7 @@ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_pars
             mapper->from_ast(ctx.ast, result);
 
             if (ctx.is_debug()) {
-                fprintf(stderr, "\nAST for partial parse (fail):\n%s\n", ctx.ast.dump().c_str());
+                if(0) fprintf(stderr, "\nAST for partial parse (fail):\n%s\n", ctx.ast.dump().c_str());
                 fflush(stderr);
             }
             return msg;
@@ -3299,7 +3299,7 @@ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_pars
     mapper->from_ast(ctx.ast, result);
 
     if (ctx.is_debug()) {
-        fprintf(stderr, "\nAST for %s parse:\n%s\n", is_partial ? "partial" : "full", ctx.ast.dump().c_str());
+        if(0) fprintf(stderr, "\nAST for %s parse:\n%s\n", is_partial ? "partial" : "full", ctx.ast.dump().c_str());
         fflush(stderr);
     }
 

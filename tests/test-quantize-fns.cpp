@@ -210,7 +210,7 @@ int main(int argc, char * argv[]) {
         if (arg == "-v") {
             verbose = true;
         } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            if(0) fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             return 1;
         }
     }

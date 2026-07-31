@@ -443,14 +443,14 @@ void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     GGML_TENSOR_BINARY_OP_LOCALS
 
-    if(0)fprintf(stderr, "dyn-ex getrows enter: src0=%s src1=%s ne13=%lld\n",
+    if(0) fprintf(stderr, "dyn-ex getrows enter: src0=%s src1=%s ne13=%lld\n",
         ggml_get_name(src0), ggml_get_name(src1), (long long)ne13);
     fflush(stderr);
 
     GGML_ASSERT(src1->type == GGML_TYPE_I32);
     GGML_ASSERT(ne13 == 1);
 
-    if(0)fprintf(stderr, "dyn-ex getrows: src0->nb[0]=%zu type_size=%zu name=%s ne=[%lld,%lld,%lld,%lld]\n",
+    if(0) fprintf(stderr, "dyn-ex getrows: src0->nb[0]=%zu type_size=%zu name=%s ne=[%lld,%lld,%lld,%lld]\n",
         src0->nb[0], ggml_type_size(src0->type), ggml_get_name(src0),
         (long long)src0->ne[0], (long long)src0->ne[1], (long long)src0->ne[2], (long long)src0->ne[3]);
     fflush(stderr);
@@ -463,7 +463,7 @@ void ggml_cuda_op_get_rows(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        if(0)fprintf(stderr, "dyn-ex getrows ERROR after launch: %s name=%s\n", cudaGetErrorString(err), ggml_get_name(src0));
+        if(0) fprintf(stderr, "dyn-ex getrows ERROR after launch: %s name=%s\n", cudaGetErrorString(err), ggml_get_name(src0));
         fflush(stderr);
     }
 }

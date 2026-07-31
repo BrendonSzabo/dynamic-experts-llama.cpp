@@ -400,9 +400,9 @@ static void ggml_check_sycl() try {
 
 /* NOT REMOVE, keep it for next optimize for XMX.
 #if defined(SYCL_USE_XMX)
-        fprintf(stderr, "%s: SYCL_USE_XMX: yes\n", __func__);
+        if(0) fprintf(stderr, "%s: SYCL_USE_XMX: yes\n", __func__);
 #else
-        fprintf(stderr, "%s: SYCL_USE_XMX: no\n", __func__);
+        if(0) fprintf(stderr, "%s: SYCL_USE_XMX: no\n", __func__);
 #endif
 */
         // Async USM allocation/free is also useful outside the graph path: it avoids the host waits in the reorder

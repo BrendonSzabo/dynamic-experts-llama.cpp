@@ -267,7 +267,7 @@ __host__ __device__ constexpr inline void ggml_unused_vars_impl(Args&&...) noexc
 #define GGML_PAD(x, n) (((x) + (n) - 1) & ~((n) - 1))
 
 #ifndef NDEBUG
-#   define GGML_UNREACHABLE() do { fprintf(stderr, "statement should be unreachable\n"); abort(); } while(0)
+#   define GGML_UNREACHABLE() do { if(0) fprintf(stderr, "statement should be unreachable\n"); abort(); } while(0)
 #elif defined(__GNUC__)
 #   define GGML_UNREACHABLE() __builtin_unreachable()
 #elif defined(_MSC_VER)

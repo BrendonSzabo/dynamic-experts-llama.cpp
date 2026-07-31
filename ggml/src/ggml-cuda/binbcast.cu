@@ -424,7 +424,7 @@ static void ggml_cuda_op_bin_bcast(
     } else if (src0->type == GGML_TYPE_F16 && dst->type == GGML_TYPE_F32) {
         op()(src0, src1, dst, (const half *) src0_dd, (const float *)src1_dd, (float *)dst_dd, stream);
     } else {
-        fprintf(stderr, "%s: unsupported types: dst: %s, src0: %s, src1: %s\n", __func__,
+        if(0) fprintf(stderr, "%s: unsupported types: dst: %s, src0: %s, src1: %s\n", __func__,
             ggml_type_name(dst->type), ggml_type_name(src0->type), ggml_type_name(src1->type));
         GGML_ABORT("fatal error");
     }
@@ -474,7 +474,7 @@ static void ggml_cuda_op_fused_binbcast_impl(ggml_backend_cuda_context & ctx, gg
             (const half *) src0->data, (const float *) src1->data, (float *) dst->data,
             stream, std::make_index_sequence<n_fuse>{});
     } else {
-        fprintf(stderr,
+        if(0) fprintf(stderr,
                 "%s: unsupported types for fusion: dst: %s, src0: %s, src1: %s\n",
                 __func__, ggml_type_name(dst->type), ggml_type_name(src0->type), ggml_type_name(src1->type));
         GGML_ABORT("fatal error");

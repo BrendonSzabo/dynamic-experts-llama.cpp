@@ -16,13 +16,13 @@
 
 int main(int argc, char ** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <vocab-file>\n", argv[0]);
+        if(0) fprintf(stderr, "Usage: %s <vocab-file>\n", argv[0]);
         return 1;
     }
 
     const std::string fname = argv[1];
 
-    fprintf(stderr, "%s : reading vocab from: '%s'\n", __func__, fname.c_str());
+    if(0) fprintf(stderr, "%s : reading vocab from: '%s'\n", __func__, fname.c_str());
 
     llama_model * model;
     llama_context * ctx;
@@ -38,7 +38,7 @@ int main(int argc, char ** argv) {
         model = llama_model_load_from_file(fname.c_str(), mparams);
 
         if (model == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
             return 1;
         }
 
@@ -47,7 +47,7 @@ int main(int argc, char ** argv) {
         ctx = llama_init_from_model(model, cparams);
 
         if (ctx == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, fname.c_str());
             llama_model_free(model);
             return 1;
         }
@@ -73,7 +73,7 @@ int main(int argc, char ** argv) {
         std::vector<llama_token> tokens = common_tokenize(ctx, str, false, true);
         std::string check = common_detokenize(ctx, tokens);
         if (check != str) {
-            fprintf(stderr, "%s : error: token %d detokenizes to '%s'(%zu) but tokenization of this detokenizes to '%s'(%zu)\n",
+            if(0) fprintf(stderr, "%s : error: token %d detokenizes to '%s'(%zu) but tokenization of this detokenizes to '%s'(%zu)\n",
                 __func__, i, str.c_str(), str.length(), check.c_str(), check.length());
             return 2;
         }
@@ -99,7 +99,7 @@ int main(int argc, char ** argv) {
                     std::vector<llama_token> tokens = common_tokenize(ctx, str, false, true);
                     std::string check = common_detokenize(ctx, tokens);
                     if (cp != 9601 && str != check) {
-                        fprintf(stderr, "error: codepoint 0x%x detokenizes to '%s'(%zu) instead of '%s'(%zu)\n",
+                        if(0) fprintf(stderr, "error: codepoint 0x%x detokenizes to '%s'(%zu) instead of '%s'(%zu)\n",
                                 cp, check.c_str(), check.length(), str.c_str(), str.length());
                         errcode = 3;
                     }

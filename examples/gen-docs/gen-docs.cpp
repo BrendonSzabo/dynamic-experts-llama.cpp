@@ -106,7 +106,7 @@ int main(int, char **) {
     for (const auto & md : md_files) {
         std::ifstream infile(md.fname);
         if (!infile.is_open()) {
-            fprintf(stderr, "failed to open file '%s' for reading\n", md.fname.c_str());
+            if(0) fprintf(stderr, "failed to open file '%s' for reading\n", md.fname.c_str());
             return 1;
         }
 
@@ -120,7 +120,7 @@ int main(int, char **) {
         size_t help_end   = content.find(HELP_END_MARKER);
 
         if (help_start == std::string::npos || help_end == std::string::npos || help_end <= help_start) {
-            fprintf(stderr, "failed to find help markers in file '%s'\n", md.fname.c_str());
+            if(0) fprintf(stderr, "failed to find help markers in file '%s'\n", md.fname.c_str());
             return 1;
         }
 
@@ -132,7 +132,7 @@ int main(int, char **) {
 
         std::ofstream outfile(md.fname);
         if (!outfile.is_open()) {
-            fprintf(stderr, "failed to open file '%s' for writing\n", md.fname.c_str());
+            if(0) fprintf(stderr, "failed to open file '%s' for writing\n", md.fname.c_str());
             return 1;
         }
         outfile << content;

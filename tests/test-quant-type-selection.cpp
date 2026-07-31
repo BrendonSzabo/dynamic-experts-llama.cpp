@@ -121,7 +121,7 @@ static bool parse_snapshot_file(const std::string & path, std::vector<snapshot_s
         if (line[0] == '[') {
             auto close = line.find(']');
             if (close == std::string::npos) {
-                fprintf(stderr, "parse error: missing ] in '%s'\n", line.c_str());
+                if(0) fprintf(stderr, "parse error: missing ] in '%s'\n", line.c_str());
                 return false;
             }
             std::string ftype_str = line.substr(1, close - 1);
@@ -134,13 +134,13 @@ static bool parse_snapshot_file(const std::string & path, std::vector<snapshot_s
 
             llama_ftype ftype = llama_ftype_from_name(ftype_str.c_str());
             if ((int) ftype < 0) {
-                fprintf(stderr, "parse error: unknown ftype '%s'\n", ftype_str.c_str());
+                if(0) fprintf(stderr, "parse error: unknown ftype '%s'\n", ftype_str.c_str());
                 return false;
             }
 
             ggml_type dtype = ggml_type_from_name(default_str);
             if (dtype == GGML_TYPE_COUNT) {
-                fprintf(stderr, "parse error: unknown default type '%s'\n", default_str.c_str());
+                if(0) fprintf(stderr, "parse error: unknown default type '%s'\n", default_str.c_str());
                 return false;
             }
 
@@ -150,13 +150,13 @@ static bool parse_snapshot_file(const std::string & path, std::vector<snapshot_s
         }
 
         if (!cur) {
-            fprintf(stderr, "parse error: tensor line before any section: '%s'\n", line.c_str());
+            if(0) fprintf(stderr, "parse error: tensor line before any section: '%s'\n", line.c_str());
             return false;
         }
 
         auto sp = line.rfind(' ');
         if (sp == std::string::npos) {
-            fprintf(stderr, "parse error: no space in tensor line: '%s'\n", line.c_str());
+            if(0) fprintf(stderr, "parse error: no space in tensor line: '%s'\n", line.c_str());
             return false;
         }
 
@@ -165,7 +165,7 @@ static bool parse_snapshot_file(const std::string & path, std::vector<snapshot_s
 
         ggml_type gt = ggml_type_from_name(ttype);
         if (gt == GGML_TYPE_COUNT) {
-            fprintf(stderr, "parse error: unknown type '%s' for tensor '%s'\n", ttype.c_str(), tname.c_str());
+            if(0) fprintf(stderr, "parse error: unknown type '%s' for tensor '%s'\n", ttype.c_str(), tname.c_str());
             return false;
         }
 
@@ -326,15 +326,15 @@ static std::string generate_snapshot(const std::string &       name,
 }
 
 static int run_generate(const std::string & snapshot_dir) {
-    fprintf(stderr, "This will overwrite all snapshot files in:\n  %s\n", snapshot_dir.c_str());
-    fprintf(stderr, "Continue? [y/N] ");
+    if(0) fprintf(stderr, "This will overwrite all snapshot files in:\n  %s\n", snapshot_dir.c_str());
+    if(0) fprintf(stderr, "Continue? [y/N] ");
     int ch = fgetc(stdin);
     if (ch != 'y' && ch != 'Y') {
-        fprintf(stderr, "Aborted.\n");
+        if(0) fprintf(stderr, "Aborted.\n");
         return 1;
     }
 
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
 
     int n_written = 0;
 
@@ -342,10 +342,10 @@ static int run_generate(const std::string & snapshot_dir) {
         const auto & spec = model_specs[m];
         std::string  name = model_name_from_repo(spec.repo);
 
-        fprintf(stderr, "Fetching model metadata for %s from %s...\n", name.c_str(), spec.repo);
+        if(0) fprintf(stderr, "Fetching model metadata for %s from %s...\n", name.c_str(), spec.repo);
         auto result = gguf_fetch_model_meta(spec.repo, spec.quant);
         if (!result.has_value()) {
-            fprintf(stderr, "ERROR: could not fetch model metadata for %s\n", name.c_str());
+            if(0) fprintf(stderr, "ERROR: could not fetch model metadata for %s\n", name.c_str());
             return 1;
         }
 
@@ -360,19 +360,19 @@ static int run_generate(const std::string & snapshot_dir) {
 
         std::ofstream f(path);
         if (!f.good()) {
-            fprintf(stderr, "ERROR: could not write %s\n", path.c_str());
+            if(0) fprintf(stderr, "ERROR: could not write %s\n", path.c_str());
             llama_quant_free(qs);
             llama_model_free(model);
             return 1;
         }
         f << content;
         n_written++;
-        fprintf(stderr, "  wrote %s\n", path.c_str());
+        if(0) fprintf(stderr, "  wrote %s\n", path.c_str());
         llama_quant_free(qs);
         llama_model_free(model);
     }
 
-    fprintf(stderr, "%d files written\n", n_written);
+    if(0) fprintf(stderr, "%d files written\n", n_written);
     return 0;
 }
 

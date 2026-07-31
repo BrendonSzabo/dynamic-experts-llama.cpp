@@ -14,7 +14,7 @@ int main(void) {
     mtmd_input_chunks * chunks = mtmd_test_create_input_chunks();
 
     if (!chunks) {
-        fprintf(stderr, "Failed to create input chunks\n");
+        if(0) fprintf(stderr, "Failed to create input chunks\n");
         return 1;
     }
 

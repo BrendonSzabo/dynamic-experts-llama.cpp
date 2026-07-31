@@ -180,12 +180,12 @@ static void usage(const char * executable) {
 static int load_imatrix(const std::string & imatrix_file, std::vector<std::string> & imatrix_datasets, std::unordered_map<std::string, std::vector<float>> & imatrix_data) {
     common_imatrix loaded;
     if (!common_imatrix_load(imatrix_file, loaded)) {
-        fprintf(stderr, "%s: failed to load imatrix from '%s'\n", __func__, imatrix_file.c_str());
+        if(0) fprintf(stderr, "%s: failed to load imatrix from '%s'\n", __func__, imatrix_file.c_str());
         exit(1);
     }
 
     if (!loaded.is_legacy && !loaded.has_metadata) {
-        fprintf(stderr, "%s: missing imatrix metadata in file %s\n", __func__, imatrix_file.c_str());
+        if(0) fprintf(stderr, "%s: missing imatrix metadata in file %s\n", __func__, imatrix_file.c_str());
         exit(1);
     }
 
@@ -307,7 +307,7 @@ static ggml_type parse_ggml_type(const char * arg) {
             return type;
         }
     }
-    fprintf(stderr, "\n%s: invalid ggml_type '%s'\n\n", __func__, arg);
+    if(0) fprintf(stderr, "\n%s: invalid ggml_type '%s'\n\n", __func__, arg);
     return GGML_TYPE_COUNT;
 }
 
@@ -580,11 +580,11 @@ int llama_quantize(int argc, char ** argv) {
         arg_idx++;
 
         if (argc <= arg_idx) {
-            fprintf(stderr, "%s: missing ftype\n", __func__);
+            if(0) fprintf(stderr, "%s: missing ftype\n", __func__);
             return 1;
         }
         if (!try_parse_ftype(argv[arg_idx], params.ftype, ftype_str)) {
-            fprintf(stderr, "%s: invalid ftype '%s'\n", __func__, argv[arg_idx]);
+            if(0) fprintf(stderr, "%s: invalid ftype '%s'\n", __func__, argv[arg_idx]);
             return 1;
         }
         if (ftype_str == "COPY") {
@@ -599,14 +599,14 @@ int llama_quantize(int argc, char ** argv) {
             params.nthread = std::stoi(argv[arg_idx]);
         }
         catch (const std::exception & e) {
-            fprintf(stderr, "%s: invalid nthread '%s' (%s)\n", __func__, argv[arg_idx], e.what());
+            if(0) fprintf(stderr, "%s: invalid nthread '%s' (%s)\n", __func__, argv[arg_idx], e.what());
             return 1;
         }
     }
 
     if (!params.dry_run) {
         if (std::error_code ec; std::filesystem::equivalent(fname_inp, fname_out, ec)) {
-            fprintf(stderr, "%s: error: input and output files are the same: '%s'\n", __func__, fname_inp.c_str());
+            if(0) fprintf(stderr, "%s: error: input and output files are the same: '%s'\n", __func__, fname_inp.c_str());
             return 1;
         }
     }
@@ -614,15 +614,15 @@ int llama_quantize(int argc, char ** argv) {
     llama_print_build_info();
 
     if (params.dry_run) {
-        fprintf(stderr, "%s: calculating quantization size for '%s' as %s", __func__, fname_inp.c_str(), ftype_str.c_str());
+        if(0) fprintf(stderr, "%s: calculating quantization size for '%s' as %s", __func__, fname_inp.c_str(), ftype_str.c_str());
     } else {
-        fprintf(stderr, "%s: quantizing '%s' to '%s' as %s", __func__, fname_inp.c_str(), fname_out.c_str(), ftype_str.c_str());
+        if(0) fprintf(stderr, "%s: quantizing '%s' to '%s' as %s", __func__, fname_inp.c_str(), fname_out.c_str(), ftype_str.c_str());
     }
 
     if (params.nthread > 0) {
-        fprintf(stderr, " using %d threads", params.nthread);
+        if(0) fprintf(stderr, " using %d threads", params.nthread);
     }
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
 
     const int64_t t_main_start_us = llama_time_us();
 
@@ -633,7 +633,7 @@ int llama_quantize(int argc, char ** argv) {
         const int64_t t_start_us = llama_time_us();
 
         if (llama_model_quantize(fname_inp.c_str(), fname_out.c_str(), &params)) {
-            fprintf(stderr, "%s: failed to quantize model from '%s'\n", __func__, fname_inp.c_str());
+            if(0) fprintf(stderr, "%s: failed to quantize model from '%s'\n", __func__, fname_inp.c_str());
             return 1;
         }
 

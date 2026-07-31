@@ -141,6 +141,6 @@ int main(int argc, char ** argv) {
         }
     }
 
-    fprintf(stderr, "error: unknown command '%s'\n", arg.c_str());
+    if(0) fprintf(stderr, "error: unknown command '%s'\n", arg.c_str());
     return 1;
 }

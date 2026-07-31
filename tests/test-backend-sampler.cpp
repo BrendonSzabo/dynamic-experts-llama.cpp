@@ -37,7 +37,7 @@ static llama_model_ptr load_model(const test_args & args) {
             devs[0] = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
 
             if (devs[0] == nullptr) {
-                fprintf(stderr, "Error: GPU requested but not available\n");
+                if(0) fprintf(stderr, "Error: GPU requested but not available\n");
                 return nullptr;
             }
 
@@ -47,13 +47,13 @@ static llama_model_ptr load_model(const test_args & args) {
 
             mparams.n_gpu_layers = 0;
         } else {
-            fprintf(stderr, "Error: invalid device '%s'\n", args.device.c_str());
+            if(0) fprintf(stderr, "Error: invalid device '%s'\n", args.device.c_str());
             return nullptr;
         }
 
         mparams.devices = devs;
 
-        fprintf(stderr, "Using device: %s\n", ggml_backend_dev_name(devs[0]));
+        if(0) fprintf(stderr, "Using device: %s\n", ggml_backend_dev_name(devs[0]));
     }
 
     llama_model_ptr res;
@@ -61,7 +61,7 @@ static llama_model_ptr load_model(const test_args & args) {
     res.reset(llama_model_load_from_file(args.model.c_str(), mparams));
 
     if (!res) {
-        fprintf(stderr, "Warning: failed to load model '%s', skipping test\n", args.model.c_str());
+        if(0) fprintf(stderr, "Warning: failed to load model '%s', skipping test\n", args.model.c_str());
         return nullptr;
     }
 
@@ -126,7 +126,7 @@ struct test_context {
                                            prompt_tokens.data(), prompt_tokens.size(),
                                            false, false);
             if (n_tokens < 0) {
-                fprintf(stderr, "Warning: tokenization failed for seq_id %d\n", seq_id);
+                if(0) fprintf(stderr, "Warning: tokenization failed for seq_id %d\n", seq_id);
                 llama_batch_free(batch);
                 return false;
             }
@@ -160,7 +160,7 @@ struct test_context {
         }
 
         if (llama_decode(ctx.get(), batch) != 0) {
-            fprintf(stderr, "Warning: llama_decode failed\n");
+            if(0) fprintf(stderr, "Warning: llama_decode failed\n");
             llama_batch_free(batch);
             return false;
         }
@@ -180,7 +180,7 @@ struct test_context {
     int32_t idx_for_seq(llama_seq_id seq_id) {
         auto it = last_batch_info.find(seq_id);
         if (it == last_batch_info.end()) {
-            fprintf(stderr, "Error: no batch index found for seq_id %d\n", seq_id);
+            if(0) fprintf(stderr, "Error: no batch index found for seq_id %d\n", seq_id);
             return -1;
         }
         return it->second;
@@ -204,7 +204,7 @@ struct test_context {
         common_batch_add(batch, token, pos, { seq_id }, true);
 
         if (llama_decode(ctx.get(), batch) != 0) {
-            fprintf(stderr, "Warning: llama_decode failed for token %d in seq %d\n", token, seq_id);
+            if(0) fprintf(stderr, "Warning: llama_decode failed for token %d in seq %d\n", token, seq_id);
             llama_batch_free(batch);
             return false;
         }
@@ -228,7 +228,7 @@ struct test_context {
         }
 
         if (llama_decode(ctx.get(), batch) != 0) {
-            fprintf(stderr, "Warning: llama_decode failed for batch tokens\n");
+            if(0) fprintf(stderr, "Warning: llama_decode failed for batch tokens\n");
             llama_batch_free(batch);
             return false;
         }
@@ -1037,7 +1037,7 @@ static test_args parse_cli(int argc, char ** argv) {
 
         if (std::strcmp(arg, "--test") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "--test expects a value\n");
+                if(0) fprintf(stderr, "--test expects a value\n");
                 exit(EXIT_FAILURE);
             }
             out.test = argv[++i];
@@ -1049,7 +1049,7 @@ static test_args parse_cli(int argc, char ** argv) {
         }
         if (std::strcmp(arg, "--model") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "--model expects a value\n");
+                if(0) fprintf(stderr, "--model expects a value\n");
                 exit(EXIT_FAILURE);
             }
             out.model = argv[++i];
@@ -1061,7 +1061,7 @@ static test_args parse_cli(int argc, char ** argv) {
         }
         if (std::strcmp(arg, "--device") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "--device expects a value (cpu or gpu)\n");
+                if(0) fprintf(stderr, "--device expects a value (cpu or gpu)\n");
                 exit(EXIT_FAILURE);
             }
             out.device = argv[++i];
@@ -1076,12 +1076,12 @@ static test_args parse_cli(int argc, char ** argv) {
             continue;
         }
 
-        fprintf(stderr, "Unexpected argument: %s\n", arg);
+        if(0) fprintf(stderr, "Unexpected argument: %s\n", arg);
         exit(EXIT_FAILURE);
     }
 
     if (out.device != "cpu" && out.device != "gpu" && out.device != "auto") {
-        fprintf(stderr, "Invalid device '%s'. Must be 'cpu', 'gpu' or 'auto'\n", out.device.c_str());
+        if(0) fprintf(stderr, "Invalid device '%s'. Must be 'cpu', 'gpu' or 'auto'\n", out.device.c_str());
         exit(EXIT_FAILURE);
     }
 
@@ -1099,9 +1099,9 @@ static std::vector<const backend_test_case *> collect_tests_to_run(const std::st
             }
         }
         if (selected.empty()) {
-            fprintf(stderr, "Unknown test '%s'. Available tests:\n", requested.c_str());
+            if(0) fprintf(stderr, "Unknown test '%s'. Available tests:\n", requested.c_str());
             for (const auto & test : BACKEND_TESTS) {
-                fprintf(stderr, "  %s\n", test.name.c_str());
+                if(0) fprintf(stderr, "  %s\n", test.name.c_str());
             }
             exit(EXIT_FAILURE);
         }
@@ -1114,7 +1114,7 @@ static std::vector<const backend_test_case *> collect_tests_to_run(const std::st
     }
 
     if (selected.empty()) {
-        fprintf(stderr, "No backend sampling tests selected. Use --test=<name> to pick one.\n");
+        if(0) fprintf(stderr, "No backend sampling tests selected. Use --test=<name> to pick one.\n");
     }
 
     return selected;
@@ -1122,11 +1122,11 @@ static std::vector<const backend_test_case *> collect_tests_to_run(const std::st
 
 static void run_tests(const std::vector<const backend_test_case *> & tests, const test_params & args) {
     for (const auto & test : tests) {
-        fprintf(stderr, "\n=== %s ===\n", test->name.c_str());
+        if(0) fprintf(stderr, "\n=== %s ===\n", test->name.c_str());
         try {
             test->fn(args);
         } catch (const std::exception & e) {
-            fprintf(stderr, "Error running test '%s': %s\n", test->name.c_str(), e.what());
+            if(0) fprintf(stderr, "Error running test '%s': %s\n", test->name.c_str(), e.what());
             exit(EXIT_FAILURE);
         }
     }
@@ -1142,12 +1142,12 @@ int main(int argc, char ** argv) {
     {
         std::ifstream file(args.model);
         if (!file.is_open()) {
-            fprintf(stderr, "no model '%s' found\n", args.model.c_str());
+            if(0) fprintf(stderr, "no model '%s' found\n", args.model.c_str());
             return EXIT_FAILURE;
         }
     }
 
-    fprintf(stderr, "using '%s'\n", args.model.c_str());
+    if(0) fprintf(stderr, "using '%s'\n", args.model.c_str());
 
     llama_backend_init();
 

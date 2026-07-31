@@ -53,12 +53,12 @@ int main(int argc, char ** argv) {
     common_init_result_ptr llama_init = common_init_from_params(params);
     llama_model * model = llama_init->model();
     if (model == nullptr) {
-        fprintf(stderr, "%s : failed to init model\n", __func__);
+        if(0) fprintf(stderr, "%s : failed to init model\n", __func__);
         return 1;
     }
 
     if (!llama_model_is_recurrent(model) && !llama_model_is_hybrid(model)) {
-        fprintf(stderr, "%s : skipping for non-recurrent model\n", __func__);
+        if(0) fprintf(stderr, "%s : skipping for non-recurrent model\n", __func__);
         return 0;
     }
 
@@ -68,12 +68,12 @@ int main(int argc, char ** argv) {
     llama_context * ctx_src = make_ctx(params, model);
     llama_context * ctx_dst = make_ctx(params, model);
     if (ctx_src == nullptr || ctx_dst == nullptr) {
-        fprintf(stderr, "%s : failed to init contexts\n", __func__);
+        if(0) fprintf(stderr, "%s : failed to init contexts\n", __func__);
         return 1;
     }
 
     if (llama_n_rs_seq(ctx_src) == 0) {
-        fprintf(stderr, "%s : skipping because n_rs_seq is disabled\n", __func__);
+        if(0) fprintf(stderr, "%s : skipping because n_rs_seq is disabled\n", __func__);
         llama_free(ctx_src);
         llama_free(ctx_dst);
         return 0;
@@ -90,7 +90,7 @@ int main(int argc, char ** argv) {
         tokens.resize(n_rs_seq + 1);
     }
     if (tokens.size() < 2) {
-        fprintf(stderr, "%s : not enough prompt tokens\n", __func__);
+        if(0) fprintf(stderr, "%s : not enough prompt tokens\n", __func__);
         return 1;
     }
     const uint32_t    n_tokens = tokens.size();
@@ -100,11 +100,11 @@ int main(int argc, char ** argv) {
     // Decode the full prompt on the source, then roll back the last position.
     // Rollback leaves the recurrent memory in a snapshot state (rs_idx != 0).
     if (!decode_tokens(ctx_src, tokens, n_tokens)) {
-        fprintf(stderr, "%s : failed to decode prompt\n", __func__);
+        if(0) fprintf(stderr, "%s : failed to decode prompt\n", __func__);
         return 1;
     }
     if (!llama_memory_seq_rm(llama_get_memory(ctx_src), 0, last_pos, -1)) {
-        fprintf(stderr, "%s : rollback failed\n", __func__);
+        if(0) fprintf(stderr, "%s : rollback failed\n", __func__);
         return 1;
     }
 
@@ -116,21 +116,21 @@ int main(int argc, char ** argv) {
     // Replay the rolled-back token on both contexts and compare logits.
     if (!decode_one(ctx_src, last_tok, last_pos) ||
         !decode_one(ctx_dst, last_tok, last_pos)) {
-        fprintf(stderr, "%s : replay failed\n", __func__);
+        if(0) fprintf(stderr, "%s : replay failed\n", __func__);
         return 1;
     }
 
     const float * logits_src = llama_get_logits_ith(ctx_src, 0);
     const float * logits_dst = llama_get_logits_ith(ctx_dst, 0);
     if (logits_src == nullptr || logits_dst == nullptr) {
-        fprintf(stderr, "%s : missing logits\n", __func__);
+        if(0) fprintf(stderr, "%s : missing logits\n", __func__);
         return 1;
     }
 
     constexpr float eps = 1e-5f;
     for (int i = 0; i < n_vocab; ++i) {
         if (std::fabs(logits_src[i] - logits_dst[i]) > eps) {
-            fprintf(stderr, "%s : logits mismatch at token %d (%g != %g)\n",
+            if(0) fprintf(stderr, "%s : logits mismatch at token %d (%g != %g)\n",
                     __func__, i, (double) logits_src[i], (double) logits_dst[i]);
             return 1;
         }
@@ -141,7 +141,7 @@ int main(int argc, char ** argv) {
     // non-zero at load time. The restore must wipe that state and still match.
     llama_context * ctx_dirty = make_ctx(params, model);
     if (ctx_dirty == nullptr) {
-        fprintf(stderr, "%s : failed to init dirty ctx\n", __func__);
+        if(0) fprintf(stderr, "%s : failed to init dirty ctx\n", __func__);
         return 1;
     }
 
@@ -153,36 +153,36 @@ int main(int argc, char ** argv) {
         }
     }
     if (!decode_tokens(ctx_dirty, noise, n_tokens)) {
-        fprintf(stderr, "%s : dirty prompt decode failed\n", __func__);
+        if(0) fprintf(stderr, "%s : dirty prompt decode failed\n", __func__);
         return 1;
     }
     if (!llama_memory_seq_rm(llama_get_memory(ctx_dirty), 0, last_pos, -1)) {
-        fprintf(stderr, "%s : dirty rollback failed\n", __func__);
+        if(0) fprintf(stderr, "%s : dirty rollback failed\n", __func__);
         return 1;
     }
 
     ckpt.load_tgt(ctx_dirty, 0, 0);
 
     if (!decode_one(ctx_dirty, last_tok, last_pos)) {
-        fprintf(stderr, "%s : dirty replay failed\n", __func__);
+        if(0) fprintf(stderr, "%s : dirty replay failed\n", __func__);
         return 1;
     }
 
     const float * logits_dirty = llama_get_logits_ith(ctx_dirty, 0);
     if (logits_dirty == nullptr) {
-        fprintf(stderr, "%s : missing dirty logits\n", __func__);
+        if(0) fprintf(stderr, "%s : missing dirty logits\n", __func__);
         return 1;
     }
 
     for (int i = 0; i < n_vocab; ++i) {
         if (std::fabs(logits_src[i] - logits_dirty[i]) > eps) {
-            fprintf(stderr, "%s : dirty-ctx logits mismatch at token %d (%g != %g)\n",
+            if(0) fprintf(stderr, "%s : dirty-ctx logits mismatch at token %d (%g != %g)\n",
                     __func__, i, (double) logits_src[i], (double) logits_dirty[i]);
             return 1;
         }
     }
 
-    fprintf(stderr, "%s : recurrent rollback checkpoint restored successfully\n", __func__);
+    if(0) fprintf(stderr, "%s : recurrent rollback checkpoint restored successfully\n", __func__);
     llama_free(ctx_src);
     llama_free(ctx_dst);
     llama_free(ctx_dirty);

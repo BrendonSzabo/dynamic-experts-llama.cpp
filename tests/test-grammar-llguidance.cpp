@@ -49,22 +49,22 @@ static bool match_string(const std::string & input, llama_sampler * grammar) {
 
 static void test(const std::string & test_desc, const std::string & grammar_str,
                  const std::vector<std::string> & passing_strings, const std::vector<std::string> & failing_strings) {
-    fprintf(stderr, "⚫ Testing %s\n%s\n", test_desc.c_str(), grammar_str.c_str());
+    if(0) fprintf(stderr, "⚫ Testing %s\n%s\n", test_desc.c_str(), grammar_str.c_str());
     fflush(stderr);
 
     auto * grammar = llama_sampler_init_llg(vocab, "lark", grammar_str.c_str());
 
-    fprintf(stderr, "  🔵 Valid strings:\n");
+    if(0) fprintf(stderr, "  🔵 Valid strings:\n");
 
     // Passing strings
     for (const auto & test_string : passing_strings) {
-        fprintf(stderr, "    \"%s\" ", test_string.c_str());
+        if(0) fprintf(stderr, "    \"%s\" ", test_string.c_str());
         fflush(stderr);
 
         bool matched = match_string(test_string, grammar);
 
         if (!matched) {
-            fprintf(stderr, "❌ (failed to match)\n");
+            if(0) fprintf(stderr, "❌ (failed to match)\n");
 
             // DEBUG: Write strings to files so that we can analyze more easily with gbnf-validator program to see exactly where things failed.
             // DEBUG: Write the grammar_str to test-grammar-integration.grammar.gbnf
@@ -81,7 +81,7 @@ static void test(const std::string & test_desc, const std::string & grammar_str,
                 fclose(string_file);
             }
 
-            fprintf(stderr,
+            if(0) fprintf(stderr,
                     "\n NOTE: Debug grammar file generated. To analyze this failure in detail, run the following "
                     "command:     ./test-gbnf-validator test-grammar-integration.grammar.gbnf "
                     "test-grammar-integration.string.txt\n\n");
@@ -92,17 +92,17 @@ static void test(const std::string & test_desc, const std::string & grammar_str,
         assert(matched);
     }
 
-    fprintf(stderr, "  🟠 Invalid strings:\n");
+    if(0) fprintf(stderr, "  🟠 Invalid strings:\n");
 
     // Failing strings
     for (const auto & test_string : failing_strings) {
-        fprintf(stderr, "    \"%s\" ", test_string.c_str());
+        if(0) fprintf(stderr, "    \"%s\" ", test_string.c_str());
         fflush(stderr);
 
         bool matched = match_string(test_string, grammar);
 
         if (matched) {
-            fprintf(stderr, "❌ (incorrectly matched)\n");
+            if(0) fprintf(stderr, "❌ (incorrectly matched)\n");
         } else {
             fprintf(stdout, "✅︎\n");
         }
@@ -1124,11 +1124,11 @@ start: /[A-Z ]*/)";
     for (const auto token : tokens) {
         one_hot(tok_arr, token);
 
-        fprintf(stderr, "applying token: %d\n", token);
+        if(0) fprintf(stderr, "applying token: %d\n", token);
         llama_sampler_apply(sampler, &tok_arr);
 
         auto idx = tok_arr.selected;
-        fprintf(stderr, " -> %d %f\n", cur[idx].id, cur[idx].logit);
+        if(0) fprintf(stderr, " -> %d %f\n", cur[idx].id, cur[idx].logit);
         assert(cur[tok_arr.selected].id == token);
         llama_sampler_accept(sampler, token);
     }
@@ -1148,13 +1148,13 @@ int main(int argc, const char ** argv) {
     fprintf(stdout, "Running llguidance integration tests...\n");
 
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <vocab-file>\n", argv[0]);
+        if(0) fprintf(stderr, "Usage: %s <vocab-file>\n", argv[0]);
         return 1;
     }
 
     const char * vocab_file = argv[1];
 
-    fprintf(stderr, "reading vocab from: '%s'\n", vocab_file);
+    if(0) fprintf(stderr, "reading vocab from: '%s'\n", vocab_file);
 
     llama_model *   model;
     llama_context * ctx;
@@ -1170,7 +1170,7 @@ int main(int argc, const char ** argv) {
         model = llama_model_load_from_file(vocab_file, mparams);
 
         if (model == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, vocab_file);
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, vocab_file);
             return 1;
         }
 
@@ -1180,7 +1180,7 @@ int main(int argc, const char ** argv) {
         ctx = llama_init_from_model(model, cparams);
 
         if (ctx == NULL) {
-            fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, vocab_file);
+            if(0) fprintf(stderr, "%s: error: failed to load vocab '%s'\n", __func__, vocab_file);
             llama_model_free(model);
             return 1;
         }

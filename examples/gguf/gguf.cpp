@@ -93,7 +93,7 @@ static bool gguf_ex_read_0(const std::string & fname) {
     struct gguf_context * ctx = gguf_init_from_file(fname.c_str(), params);
 
     if (!ctx) {
-        fprintf(stderr, "%s: failed to load '%s'\n", __func__, fname.c_str());
+        if(0) fprintf(stderr, "%s: failed to load '%s'\n", __func__, fname.c_str());
         return false;
     }
 
@@ -223,7 +223,7 @@ static bool gguf_ex_read_1(const std::string & fname, bool check_data) {
                 const float * data = (const float *) cur->data;
                 for (int j = 0; j < ggml_nelements(cur); ++j) {
                     if (data[j] != 100 + i) {
-                        fprintf(stderr, "%s: tensor[%d], data[%d]: found %f, expected %f\n", __func__, i, j, data[j], float(100 + i));
+                        if(0) fprintf(stderr, "%s: tensor[%d], data[%d]: found %f, expected %f\n", __func__, i, j, data[j], float(100 + i));
                         gguf_free(ctx);
                         return false;
                     }

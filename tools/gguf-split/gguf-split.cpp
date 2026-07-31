@@ -104,8 +104,8 @@ static void split_params_parse_ex(int argc, const char ** argv, split_params & p
             split_print_usage(argv[0]);
             exit(0);
         } else if (arg == "--version") {
-            fprintf(stderr, "version: %d (%s)\n", llama_build_number(), llama_commit());
-            fprintf(stderr, "built with %s for %s\n", llama_compiler(), llama_build_target());
+            if(0) fprintf(stderr, "version: %d (%s)\n", llama_build_number(), llama_commit());
+            if(0) fprintf(stderr, "built with %s for %s\n", llama_compiler(), llama_build_target());
             exit(0);
         } else if (arg == "--dry-run") {
             arg_found = true;
@@ -181,7 +181,7 @@ static bool split_params_parse(int argc, const char ** argv, split_params & para
         split_params_parse_ex(argc, argv, params);
     }
     catch (const std::invalid_argument & ex) {
-        fprintf(stderr, "%s\n", ex.what());
+        if(0) fprintf(stderr, "%s\n", ex.what());
         split_print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
@@ -225,7 +225,7 @@ struct split_strategy {
             i_split++;
             if (ctx_out != NULL) {
                 if (gguf_get_n_tensors(ctx_out) == 0 && !allow_no_tensors) {
-                    fprintf(stderr, "error: one of splits have 0 tensors. Maybe size or tensors limit is too small\n");
+                    if(0) fprintf(stderr, "error: one of splits have 0 tensors. Maybe size or tensors limit is too small\n");
                     exit(EXIT_FAILURE);
                 }
                 ctx_outs.push_back(ctx_out);
@@ -371,13 +371,13 @@ static void gguf_split(const split_params & split_params) {
 
     std::ifstream f_input(split_params.input.c_str(), std::ios::binary);
     if (!f_input.is_open()) {
-        fprintf(stderr, "%s:  failed to open input GGUF from %s\n", __func__, split_params.input.c_str());
+        if(0) fprintf(stderr, "%s:  failed to open input GGUF from %s\n", __func__, split_params.input.c_str());
         exit(EXIT_FAILURE);
     }
 
     auto * ctx_gguf = gguf_init_from_file(split_params.input.c_str(), params);
     if (!ctx_gguf) {
-        fprintf(stderr, "%s:  failed to load input GGUF from %s\n", __func__, split_params.input.c_str());
+        if(0) fprintf(stderr, "%s:  failed to load input GGUF from %s\n", __func__, split_params.input.c_str());
         exit(EXIT_FAILURE);
     }
 
@@ -395,12 +395,12 @@ static void gguf_split(const split_params & split_params) {
     gguf_free(ctx_gguf);
     f_input.close();
 
-    fprintf(stderr, "%s: %d gguf split written with a total of %d tensors.\n",
+    if(0) fprintf(stderr, "%s: %d gguf split written with a total of %d tensors.\n",
             __func__, n_split, strategy.n_tensors);
 }
 
 static void gguf_merge(const split_params & split_params) {
-    fprintf(stderr, "%s: %s -> %s\n",
+    if(0) fprintf(stderr, "%s: %s -> %s\n",
             __func__, split_params.input.c_str(),
             split_params.output.c_str());
     int n_split = 1;
@@ -408,7 +408,7 @@ static void gguf_merge(const split_params & split_params) {
 
     // avoid overwriting existing output file
     if (std::ifstream(split_params.output.c_str())) {
-        fprintf(stderr, "%s: output file %s already exists\n", __func__, split_params.output.c_str());
+        if(0) fprintf(stderr, "%s: output file %s already exists\n", __func__, split_params.output.c_str());
         exit(EXIT_FAILURE);
     }
 
@@ -435,11 +435,11 @@ static void gguf_merge(const split_params & split_params) {
         if (i_split > 0) {
             llama_split_path(split_path, sizeof(split_path), split_prefix, i_split, n_split);
         }
-        fprintf(stderr, "%s: reading metadata %s ...", __func__, split_path);
+        if(0) fprintf(stderr, "%s: reading metadata %s ...", __func__, split_path);
 
         auto * ctx_gguf = gguf_init_from_file(split_path, params);
         if (!ctx_gguf) {
-            fprintf(stderr, "\n%s:  failed to load input GGUF from %s\n", __func__, split_params.input.c_str());
+            if(0) fprintf(stderr, "\n%s:  failed to load input GGUF from %s\n", __func__, split_params.input.c_str());
             exit(EXIT_FAILURE);
         }
         ctx_ggufs.push_back(ctx_gguf);
@@ -448,7 +448,7 @@ static void gguf_merge(const split_params & split_params) {
         if (i_split == 0) {
             auto key_n_split = gguf_find_key(ctx_gguf, LLM_KV_SPLIT_COUNT);
             if (key_n_split < 0) {
-                fprintf(stderr,
+                if(0) fprintf(stderr,
                         "\n%s: input file does not contain %s metadata\n",
                         __func__,
                         LLM_KV_SPLIT_COUNT);
@@ -460,7 +460,7 @@ static void gguf_merge(const split_params & split_params) {
 
             n_split = gguf_get_val_u16(ctx_gguf, key_n_split);
             if (n_split < 1) {
-                fprintf(stderr,
+                if(0) fprintf(stderr,
                         "\n%s: input file does not contain a valid split count %d\n",
                         __func__,
                         n_split);
@@ -472,7 +472,7 @@ static void gguf_merge(const split_params & split_params) {
 
             // Verify the file naming and extract split_prefix
             if (!llama_split_prefix(split_prefix, sizeof (split_prefix), split_path, i_split, n_split)) {
-                fprintf(stderr, "\n%s: unexpected input file name: %s"
+                if(0) fprintf(stderr, "\n%s: unexpected input file name: %s"
                                 " i_split=%d"
                                 " n_split=%d\n", __func__,
                         split_path, i_split, n_split);
@@ -497,7 +497,7 @@ static void gguf_merge(const split_params & split_params) {
         }
         total_tensors += n_tensors;
 
-        fprintf(stderr, "\033[3Ddone\n");
+        if(0) fprintf(stderr, "\033[3Ddone\n");
     }
     std::ofstream fout;
     if (!split_params.dry_run) {
@@ -513,7 +513,7 @@ static void gguf_merge(const split_params & split_params) {
         llama_split_path(split_path, sizeof(split_path), split_prefix, i_split, n_split);
         std::ifstream f_input(split_path, std::ios::binary);
         if (!f_input.is_open()) {
-            fprintf(stderr, "%s:  failed to open input GGUF from %s\n", __func__, split_path);
+            if(0) fprintf(stderr, "%s:  failed to open input GGUF from %s\n", __func__, split_path);
             for (uint32_t i = 0; i < ctx_ggufs.size(); i++) {
                 gguf_free(ctx_ggufs[i]);
                 ggml_free(ctx_metas[i]);
@@ -524,7 +524,7 @@ static void gguf_merge(const split_params & split_params) {
             }
             exit(EXIT_FAILURE);
         }
-        fprintf(stderr, "%s: writing tensors %s ...", __func__, split_path);
+        if(0) fprintf(stderr, "%s: writing tensors %s ...", __func__, split_path);
 
         auto * ctx_gguf = ctx_ggufs[i_split];
         auto * ctx_meta = ctx_metas[i_split];
@@ -553,7 +553,7 @@ static void gguf_merge(const split_params & split_params) {
         gguf_free(ctx_gguf);
         ggml_free(ctx_meta);
         f_input.close();
-        fprintf(stderr, "\033[3Ddone\n");
+        if(0) fprintf(stderr, "\033[3Ddone\n");
     }
 
     if (!split_params.dry_run) {
@@ -566,7 +566,7 @@ static void gguf_merge(const split_params & split_params) {
     }
     gguf_free(ctx_out);
 
-    fprintf(stderr, "%s: %s merged from %d split with %d tensors.\n",
+    if(0) fprintf(stderr, "%s: %s merged from %d split with %d tensors.\n",
             __func__, split_params.output.c_str(), n_split, total_tensors);
 }
 

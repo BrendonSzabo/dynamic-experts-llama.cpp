@@ -7,11 +7,11 @@ int main(int argc, char *argv[] ) {
     auto * model_path = get_model_or_exit(argc, argv);
     auto * file = fopen(model_path, "r");
     if (file == nullptr) {
-        fprintf(stderr, "no model at '%s' found\n", model_path);
+        if(0) fprintf(stderr, "no model at '%s' found\n", model_path);
         return EXIT_FAILURE;
     }
 
-    fprintf(stderr, "using '%s'\n", model_path);
+    if(0) fprintf(stderr, "using '%s'\n", model_path);
     fclose(file);
 
     llama_backend_init();

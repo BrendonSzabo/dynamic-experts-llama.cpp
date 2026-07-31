@@ -154,7 +154,7 @@ int main(int argc, char * argv[]) {
             }
             size_t size = std::stoi(argv[i]);
             if (size % 32 != 0) {
-                fprintf(stderr, "error: size %zu not divisible by 32\n", size);
+                if(0) fprintf(stderr, "error: size %zu not divisible by 32\n", size);
                 invalid_param = true;
                 break;
             }
@@ -203,7 +203,7 @@ int main(int argc, char * argv[]) {
             }
             int alignment = std::stoi(argv[i]);
             if (alignment < 0 || alignment > MAX_ALIGNMENT) {
-            fprintf(stderr, "error: alignment-offset must be less than %d\n", MAX_ALIGNMENT);
+            if(0) fprintf(stderr, "error: alignment-offset must be less than %d\n", MAX_ALIGNMENT);
                 invalid_param = true;
                 break;
             }
@@ -215,7 +215,7 @@ int main(int argc, char * argv[]) {
             }
             int number = std::stoi(argv[i]);
             if (number < 0 || number > MAX_ITERATIONS) {
-            fprintf(stderr, "error: iterations must be less than %d\n", MAX_ITERATIONS);
+            if(0) fprintf(stderr, "error: iterations must be less than %d\n", MAX_ITERATIONS);
                 invalid_param = true;
                 break;
             }
@@ -224,12 +224,12 @@ int main(int argc, char * argv[]) {
             usage(argv);
             return 1;
         } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            if(0) fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             return 1;
         }
     }
     if (invalid_param) {
-        fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
+        if(0) fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
         return 1;
     }
 

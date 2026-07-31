@@ -183,10 +183,10 @@ int main()
             // pretty print error message before asserting
             if (expected_element.type != element->type || expected_element.value != element->value)
             {
-                fprintf(stderr, "index: %d\n", index);
-                fprintf(stderr, "expected_element: %d, %u\n", expected_element.type, expected_element.value);
-                fprintf(stderr, "actual_element: %d, %u\n", element->type, element->value);
-                fprintf(stderr, "expected_element != actual_element\n");
+                if(0) fprintf(stderr, "index: %d\n", index);
+                if(0) fprintf(stderr, "expected_element: %d, %u\n", expected_element.type, expected_element.value);
+                if(0) fprintf(stderr, "actual_element: %d, %u\n", element->type, element->value);
+                if(0) fprintf(stderr, "expected_element != actual_element\n");
             }
 
             assert(expected_element.type == element->type && expected_element.value == element->value);

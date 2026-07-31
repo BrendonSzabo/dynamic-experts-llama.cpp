@@ -1844,9 +1844,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     ggml_tensor * logits = nullptr;
 
     if (probs_in == nullptr) {
+        if(0) fprintf(stderr, "lora mmmmmm0");
         logits = build_lora_mm(gate_inp, cur); // [n_expert, n_tokens]
+        if(0) fprintf(stderr, "lorad");
         if (gating_op == LLAMA_EXPERT_GATING_FUNC_TYPE_SQRT_SOFTPLUS) {
+            if(0) fprintf(stderr, "sqrt softplus gate");
             ggml_mul_mat_set_prec(logits, GGML_PREC_F32);
+            if(0) fprintf(stderr, "sqrt softmaxxed");
         }
         cb(logits, "ffn_moe_logits", il);
     } else {
@@ -1854,14 +1858,18 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
 
     if (gate_inp_b) {
+        if(0) fprintf(stderr, "add");
         logits = ggml_add(ctx0, logits, gate_inp_b);
+        if(0) fprintf(stderr, "added -> cb");
         cb(logits, "ffn_moe_logits_biased", il);
+        if(0) fprintf(stderr, "callbacked");
     }
 
     ggml_tensor * probs = nullptr;
     switch (gating_op) {
         case LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX:
             {
+                if(0) fprintf(stderr, "softmaxxing");
                 probs = ggml_soft_max(ctx0, logits); // [n_expert, n_tokens]
             } break;
         case LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID:
@@ -1906,22 +1914,33 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         const int64_t n_exp_per_group = n_expert / hparams.n_expert_groups;
 
         // organize experts into n_expert_groups
+        if(0) fprintf(stderr, "ggml_reshape_3d");
         ggml_tensor * selection_groups = ggml_reshape_3d(ctx0, selection_probs, n_exp_per_group, hparams.n_expert_groups, n_tokens); // [n_exp_per_group, n_expert_groups, n_tokens]
 
+        if(0) fprintf(stderr, "ggml_argsort_top_k");
         ggml_tensor * group_scores = ggml_argsort_top_k(ctx0, selection_groups, 2); // [2, n_expert_groups, n_tokens]
+        if(0) fprintf(stderr, "ggml_reshape_4d");
         group_scores = ggml_get_rows(ctx0, ggml_reshape_4d(ctx0, selection_groups, 1, selection_groups->ne[0], selection_groups->ne[1], selection_groups->ne[2]), group_scores); // [1, 2, n_expert_groups, n_tokens]
 
         // get top n_group_used expert groups
+        if(0) fprintf(stderr, "ggml_reshape_3d");
         group_scores = ggml_sum_rows(ctx0, ggml_reshape_3d(ctx0, group_scores, group_scores->ne[1], group_scores->ne[2], group_scores->ne[3])); // [1, n_expert_groups, n_tokens]
+        if(0) fprintf(stderr, "ggml_reshape_2d");
         group_scores = ggml_reshape_2d(ctx0, group_scores, group_scores->ne[1], group_scores->ne[2]); // [n_expert_groups, n_tokens]
 
+        if(0) fprintf(stderr, "ggml_argsort_top_k");
         ggml_tensor * expert_groups = ggml_argsort_top_k(ctx0, group_scores, hparams.n_group_used); // [n_group_used, n_tokens]
+        if(0) fprintf(stderr, "cb");
         cb(expert_groups, "ffn_moe_group_topk", il);
 
         // mask out the other groups
+        if(0) fprintf(stderr, "ggml_get_rows");
         selection_probs = ggml_get_rows(ctx0, selection_groups, expert_groups); // [n_exp_per_group, n_group_used, n_tokens]
+        if(0) fprintf(stderr, "ggml_set_rows");
         selection_probs = ggml_set_rows(ctx0, ggml_fill(ctx0, selection_groups, -INFINITY), selection_probs, expert_groups); // [n_exp_per_group, n_expert_groups, n_tokens]
+        if(0) fprintf(stderr, "ggml_reshape_2d");
         selection_probs = ggml_reshape_2d(ctx0, selection_probs, n_expert, n_tokens); // [n_expert, n_tokens]
+        if(0) fprintf(stderr, "cb");
         cb(selection_probs, "ffn_moe_probs_masked", il);
     }
 
@@ -1949,7 +1968,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     // remap AFTER barrier (slot_map updated by ensure)
     if (slot_map != nullptr) {
-        // fprintf(stderr, "dyn-ex remap L%d: sm->buffer=%p sm->data=%p\n", il,
+        // if(0) fprintf(stderr, "dyn-ex remap L%d: sm->buffer=%p sm->data=%p\n", il,
         //     (void*)(slot_map->buffer), slot_map->data);
         fflush(stderr);
         ggml_tensor * se_cont = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
@@ -1960,10 +1979,10 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], n_tokens);
         selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
-        // fprintf(stderr, "dyn-ex remap L%d: data=%p buf=%p ne=[%lld,%lld]\n", il,
+        // if(0) fprintf(stderr, "dyn-ex remap L%d: data=%p buf=%p ne=[%lld,%lld]\n", il,
         //     selected_experts_slots->data, (void*)selected_experts_slots->buffer,
         //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
-        // fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
+        // if(0) fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
         //     selected_experts_slots->nb[0], selected_experts_slots->nb[1],
         //     selected_experts_slots->nb[2], selected_experts_slots->nb[3],
         //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);

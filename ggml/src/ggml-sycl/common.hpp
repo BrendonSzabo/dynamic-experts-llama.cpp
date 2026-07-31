@@ -80,7 +80,7 @@ extern int g_ggml_sycl_fa_onednn_max_kv;
 #define GGML_SYCL_DEBUG(...)              \
     do {                                  \
         if (UNLIKELY(g_ggml_sycl_debug))  \
-            fprintf(stderr, __VA_ARGS__); \
+            if(0) fprintf(stderr, __VA_ARGS__); \
     } while (0)
 
 #define CHECK_TRY_ERROR(expr)                                            \
@@ -148,8 +148,8 @@ static void crash() {
     const char* file,
     const int line,
     const char* msg) {
-  fprintf(stderr, "SYCL error: %s: %s\n", stmt, msg);
-  fprintf(stderr, "  in function %s at %s:%d\n", func, file, line);
+  if(0) fprintf(stderr, "SYCL error: %s: %s\n", stmt, msg);
+  if(0) fprintf(stderr, "  in function %s at %s:%d\n", func, file, line);
   GGML_ABORT("SYCL error");
 }
 

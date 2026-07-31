@@ -1776,7 +1776,7 @@ static void rpc_serve_client(const std::vector<ggml_backend_t> & backends, const
 void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir,
                                    size_t n_threads, size_t n_devices, ggml_backend_dev_t * devices) {
     if (n_devices == 0 || devices == nullptr) {
-        fprintf(stderr, "Invalid arguments to ggml_backend_rpc_start_server\n");
+        if(0) fprintf(stderr, "Invalid arguments to ggml_backend_rpc_start_server\n");
         return;
     }
     std::vector<ggml_backend_t> backends;
@@ -1795,7 +1795,7 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
                total / 1024 / 1024, free / 1024 / 1024);
         auto backend = ggml_backend_dev_init(dev, nullptr);
         if (!backend) {
-            fprintf(stderr, "Failed to create backend for device %s\n", dev->iface.get_name(dev));
+            if(0) fprintf(stderr, "Failed to create backend for device %s\n", dev->iface.get_name(dev));
             return;
         }
         backends.push_back(backend);
@@ -1820,18 +1820,18 @@ void ggml_backend_rpc_start_server(const char * endpoint, const char * cache_dir
     printf("  transport      : TCP\n");
 #endif // GGML_RPC_RDMA
     if (!rpc_transport_init()) {
-        fprintf(stderr, "Failed to initialize RPC transport\n");
+        if(0) fprintf(stderr, "Failed to initialize RPC transport\n");
         return;
     }
     auto server_socket = socket_t::create_server(host.c_str(), port);
     if (server_socket == nullptr) {
-        fprintf(stderr, "Failed to create server socket\n");
+        if(0) fprintf(stderr, "Failed to create server socket\n");
         return;
     }
     while (true) {
         auto client_socket = server_socket->accept();
         if (client_socket == nullptr) {
-            fprintf(stderr, "Failed to accept client connection\n");
+            if(0) fprintf(stderr, "Failed to accept client connection\n");
             return;
         }
         printf("Accepted client connection\n");

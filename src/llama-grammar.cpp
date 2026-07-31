@@ -710,7 +710,7 @@ bool llama_grammar_parser::parse(const char * src) {
             }
         }
     } catch (const std::exception & err) {
-        fprintf(stderr, "%s: error parsing grammar: %s\n\n%s\n", __func__, err.what(), src);
+        if(0) fprintf(stderr, "%s: error parsing grammar: %s\n\n%s\n", __func__, err.what(), src);
         rules.clear();
         return false;
     }
@@ -731,7 +731,7 @@ void llama_grammar_parser::print(FILE * file) {
             // fprintf(file, "\n");
         }
     } catch (const std::exception & err) {
-        fprintf(stderr, "\n%s: error printing grammar: %s\n", __func__, err.what());
+        if(0) fprintf(stderr, "\n%s: error printing grammar: %s\n", __func__, err.what());
     }
 }
 

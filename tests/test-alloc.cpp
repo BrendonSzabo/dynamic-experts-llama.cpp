@@ -157,7 +157,7 @@ static int get_leaf_id(ggml_cgraph * graph, const char * tensor_name) {
             return i;
         }
     }
-    fprintf(stderr, "leaf not found: %s\n", tensor_name);
+    if(0) fprintf(stderr, "leaf not found: %s\n", tensor_name);
     return -1;
 }
 
@@ -167,7 +167,7 @@ static int get_node_id(ggml_cgraph * graph, const char * tensor_name) {
             return i;
         }
     }
-    fprintf(stderr, "node not found: %s", tensor_name);
+    if(0) fprintf(stderr, "node not found: %s", tensor_name);
     return -1;
 }
 

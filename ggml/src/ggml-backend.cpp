@@ -857,7 +857,7 @@ static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, co
         }
     }
     if (found == -1 && buffer) {
-        fprintf(stderr, "dyn-ex sched no backend: buft=%p name=%s\n", (void*)buffer->buft, tensor->name ? tensor->name : "?");
+        if(0) fprintf(stderr, "dyn-ex sched no backend: buft=%p name=%s\n", (void*)buffer->buft, tensor->name ? tensor->name : "?");
         fflush(stderr);
     }
     return found;

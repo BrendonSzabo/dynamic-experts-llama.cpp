@@ -802,14 +802,14 @@ static struct train_params get_default_train_params() {
 }
 
 static void print_usage(int /*argc*/, char ** argv, const struct train_params * params) {
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help                       show this help message and exit\n");
-    fprintf(stderr, "  --copy-vocab-from-model FNAME    path of gguf llama model or llama2.c vocabulary from which to copy vocab (default '%s')\n", params->fn_vocab_model);
-    fprintf(stderr, "  --llama2c-model FNAME            [REQUIRED] model path from which to load Karpathy's llama2.c model\n");
-    fprintf(stderr, "  --llama2c-output-model FNAME     model path to save the converted llama2.c model (default %s')\n", params->fn_llama2c_output_model);
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "usage: %s [options]\n", argv[0]);
+    if(0) fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "options:\n");
+    if(0) fprintf(stderr, "  -h, --help                       show this help message and exit\n");
+    if(0) fprintf(stderr, "  --copy-vocab-from-model FNAME    path of gguf llama model or llama2.c vocabulary from which to copy vocab (default '%s')\n", params->fn_vocab_model);
+    if(0) fprintf(stderr, "  --llama2c-model FNAME            [REQUIRED] model path from which to load Karpathy's llama2.c model\n");
+    if(0) fprintf(stderr, "  --llama2c-output-model FNAME     model path to save the converted llama2.c model (default %s')\n", params->fn_llama2c_output_model);
+    if(0) fprintf(stderr, "\n");
 }
 
 static bool params_parse(int argc, char ** argv, struct train_params * params) {
@@ -848,18 +848,18 @@ static bool params_parse(int argc, char ** argv, struct train_params * params) {
             print_usage(argc, argv, &default_params);
             exit(0);
         } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            if(0) fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             print_usage(argc, argv, &default_params);
             exit(1);
         }
     }
     if (invalid_param) {
-        fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
+        if(0) fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
         print_usage(argc, argv, &default_params);
         exit(1);
     }
     if (!reqd_param_found){
-        fprintf(stderr, "error: please specify a llama2.c .bin file to be converted with argument --llama2c-model\n");
+        if(0) fprintf(stderr, "error: please specify a llama2.c .bin file to be converted with argument --llama2c-model\n");
         print_usage(argc, argv, &default_params);
         exit(1);
     }

@@ -24,11 +24,11 @@ static llama_grammar * build_grammar(const std::string & grammar_str) {
 }
 
 static bool test_build_grammar_fails(const std::string & grammar_str) {
-    fprintf(stderr, "⚫ Testing failure for grammar: %s\n", grammar_str.c_str());
+    if(0) fprintf(stderr, "⚫ Testing failure for grammar: %s\n", grammar_str.c_str());
     bool grammar_fails = false;
     llama_grammar * grammar = build_grammar(grammar_str);
     if (grammar != nullptr) {
-        fprintf(stderr, "  ❌ Expected build failure, but succeeded\n");
+        if(0) fprintf(stderr, "  ❌ Expected build failure, but succeeded\n");
     } else {
         grammar_fails = true;
         fprintf(stdout, "  ✅︎\n");
@@ -114,7 +114,7 @@ static bool match_string(const std::string & input, llama_grammar * grammar) {
 }
 
 static void test(const std::string & test_desc, const std::string & grammar_str, const std::vector<std::string> & passing_strings, const std::vector<std::string> & failing_strings) {
-    fprintf(stderr, "⚫ Testing %s\n%s\n", test_desc.c_str(), grammar_str.c_str());
+    if(0) fprintf(stderr, "⚫ Testing %s\n%s\n", test_desc.c_str(), grammar_str.c_str());
     fflush(stderr);
 
     auto * grammar = build_grammar(grammar_str);
@@ -124,17 +124,17 @@ static void test(const std::string & test_desc, const std::string & grammar_str,
 
     llama_grammar_stacks & stacks_cur = llama_grammar_get_stacks(grammar);
 
-    fprintf(stderr, "  🔵 Valid strings:\n");
+    if(0) fprintf(stderr, "  🔵 Valid strings:\n");
 
     // Passing strings
     for (const auto & test_string : passing_strings) {
-        fprintf(stderr, "    \"%s\" ", test_string.c_str());
+        if(0) fprintf(stderr, "    \"%s\" ", test_string.c_str());
         fflush(stderr);
 
         bool matched = match_string(test_string, grammar);
 
         if (!matched) {
-            fprintf(stderr, "❌ (failed to match)\n");
+            if(0) fprintf(stderr, "❌ (failed to match)\n");
 
             // DEBUG: Write strings to files so that we can analyze more easily with gbnf-validator program to see exactly where things failed.
             // DEBUG: Write the grammar_str to test-grammar-integration.grammar.gbnf
@@ -151,7 +151,7 @@ static void test(const std::string & test_desc, const std::string & grammar_str,
                 fclose(string_file);
             }
 
-            fprintf(stderr, "\n NOTE: Debug grammar file generated. To analyze this failure in detail, run the following command:     ./llama-gbnf-validator test-grammar-integration.grammar.gbnf test-grammar-integration.string.txt\n\n");
+            if(0) fprintf(stderr, "\n NOTE: Debug grammar file generated. To analyze this failure in detail, run the following command:     ./llama-gbnf-validator test-grammar-integration.grammar.gbnf test-grammar-integration.string.txt\n\n");
         } else {
             fprintf(stdout, "✅︎\n");
         }
@@ -162,17 +162,17 @@ static void test(const std::string & test_desc, const std::string & grammar_str,
         stacks_cur = stacks_org;
     }
 
-    fprintf(stderr, "  🟠 Invalid strings:\n");
+    if(0) fprintf(stderr, "  🟠 Invalid strings:\n");
 
     // Failing strings
     for (const auto & test_string : failing_strings) {
-        fprintf(stderr, "    \"%s\" ", test_string.c_str());
+        if(0) fprintf(stderr, "    \"%s\" ", test_string.c_str());
         fflush(stderr);
 
         bool matched = match_string(test_string, grammar);
 
         if (matched) {
-            fprintf(stderr, "❌ (incorrectly matched)\n");
+            if(0) fprintf(stderr, "❌ (incorrectly matched)\n");
         } else {
             fprintf(stdout, "✅︎\n");
         }
@@ -809,7 +809,7 @@ static void test_quantifiers() {
 }
 
 static void test_failure_missing_root() {
-    fprintf(stderr, "⚫ Testing missing root node:\n");
+    if(0) fprintf(stderr, "⚫ Testing missing root node:\n");
     // Test case for a grammar that is missing a root rule
     const std::string grammar_str = R"""(
         rot ::= expr
@@ -825,11 +825,11 @@ static void test_failure_missing_root() {
 
     // Ensure we do NOT have a root node
     assert(parsed_grammar.symbol_ids.find("root") == parsed_grammar.symbol_ids.end());
-    fprintf(stderr, "  ✅︎ Passed\n");
+    if(0) fprintf(stderr, "  ✅︎ Passed\n");
 }
 
 static void test_failure_missing_reference() {
-    fprintf(stderr, "⚫ Testing missing reference node:\n");
+    if(0) fprintf(stderr, "⚫ Testing missing reference node:\n");
 
     // Test case for a grammar that is missing a referenced rule
     const std::string grammar_str =
@@ -838,7 +838,7 @@ static void test_failure_missing_reference() {
         term ::= numero
         number ::= [0-9]+)""";
 
-    fprintf(stderr, "    Expected error:  ");
+    if(0) fprintf(stderr, "    Expected error:  ");
 
     llama_grammar_parser parsed_grammar;
     parsed_grammar.parse(grammar_str.c_str());
@@ -846,12 +846,12 @@ static void test_failure_missing_reference() {
     // Ensure we did NOT parsed correctly
     assert(parsed_grammar.rules.empty());
 
-    fprintf(stderr, "    End of expected error.\n");
-    fprintf(stderr, "  ✅︎ Passed\n");
+    if(0) fprintf(stderr, "    End of expected error.\n");
+    if(0) fprintf(stderr, "  ✅︎ Passed\n");
 }
 
 static void test_failure_left_recursion() {
-    fprintf(stderr, "⚫ Testing left recursion detection:\n");
+    if(0) fprintf(stderr, "⚫ Testing left recursion detection:\n");
 
     // Test simple left recursion detection
     const std::string simple_str = R"""(root ::= "a" | root "a")""";
@@ -879,11 +879,11 @@ static void test_failure_left_recursion() {
         empty ::= "blah" | )""";
     assert(test_build_grammar_fails(hardest_str));
 
-    fprintf(stderr, "  ✅︎ Passed\n");
+    if(0) fprintf(stderr, "  ✅︎ Passed\n");
 }
 
 static void test_failure_missing_root_symbol() {
-    fprintf(stderr, "⚫ Testing missing root symbol:\n");
+    if(0) fprintf(stderr, "⚫ Testing missing root symbol:\n");
 
     const std::string grammar_str = R"""(
         root ::= "foobar"
@@ -892,11 +892,11 @@ static void test_failure_missing_root_symbol() {
     llama_grammar * failure_result = build_grammar_with_root(grammar_str, "nonexistent");
     assert(failure_result == nullptr);
 
-    fprintf(stderr, "  ✅︎ Passed\n");
+    if(0) fprintf(stderr, "  ✅︎ Passed\n");
 }
 
 static void test_custom_root_symbol_check() {
-    fprintf(stderr, "⚫ Testing custom root symbol check:\n");
+    if(0) fprintf(stderr, "⚫ Testing custom root symbol check:\n");
 
     const std::string custom_root_grammar_str = R"""(
         foobar ::= "foobar"
@@ -909,7 +909,7 @@ static void test_custom_root_symbol_check() {
     assert(success_result != nullptr);
     llama_grammar_free_impl(success_result);
 
-    fprintf(stderr, "  ✅︎ Passed\n");
+    if(0) fprintf(stderr, "  ✅︎ Passed\n");
 }
 
 static void test_json_schema() {

@@ -85,7 +85,7 @@ static void test_reasoning_budget(
 
         llama_sampler_accept(sampler, sequence[i]);
 
-        fprintf(stderr, "    i=%zu: token=%d, finite_count=%zu, finite_token=%d\n", i, (int)sequence[i], finite_count, (int)finite_token);
+        if(0) fprintf(stderr, "    i=%zu: token=%d, finite_count=%zu, finite_token=%d\n", i, (int)sequence[i], finite_count, (int)finite_token);
 
         if (finite_count == 1) {
             if (actual_force_start == SIZE_MAX) {
@@ -103,28 +103,28 @@ static void test_reasoning_budget(
     // Verify forcing occurred at expected positions
     if (expected_force_start == SIZE_MAX) {
         if (actual_force_start != SIZE_MAX) {
-            fprintf(stderr, "Test '%s' FAILED: Expected no forcing, but forcing occurred at %zu\n", test_name, actual_force_start);
+            if(0) fprintf(stderr, "Test '%s' FAILED: Expected no forcing, but forcing occurred at %zu\n", test_name, actual_force_start);
             GGML_ASSERT(false && "Expected no forcing, but forcing occurred");
         }
     } else {
         if (actual_force_start == SIZE_MAX) {
-            fprintf(stderr, "Test '%s' FAILED: Expected forcing but none occurred\n", test_name);
+            if(0) fprintf(stderr, "Test '%s' FAILED: Expected forcing but none occurred\n", test_name);
             GGML_ASSERT(false && "Expected forcing but none occurred");
         }
         if (actual_force_start != expected_force_start) {
-            fprintf(stderr, "Test '%s' FAILED: Forcing started at %zu, expected %zu\n", test_name, actual_force_start, expected_force_start);
+            if(0) fprintf(stderr, "Test '%s' FAILED: Forcing started at %zu, expected %zu\n", test_name, actual_force_start, expected_force_start);
             GGML_ASSERT(false && "Forcing started at wrong position");
         }
     }
 
     if (expected_force_end != SIZE_MAX) {
         if (actual_force_end < expected_force_end) {
-            fprintf(stderr, "Test '%s' FAILED: Forcing ended at %zu, expected >= %zu\n", test_name, actual_force_end, expected_force_end);
+            if(0) fprintf(stderr, "Test '%s' FAILED: Forcing ended at %zu, expected >= %zu\n", test_name, actual_force_end, expected_force_end);
             GGML_ASSERT(false && "Forcing ended too early");
         }
     }
 
-    fprintf(stderr, "  Test '%s' passed (force_start=%zu, force_end=%zu)\n", test_name, actual_force_start, actual_force_end);
+    if(0) fprintf(stderr, "  Test '%s' passed (force_start=%zu, force_end=%zu)\n", test_name, actual_force_start, actual_force_end);
     (void)sequence;
 }
 
@@ -255,7 +255,7 @@ static void test_reasoning_budget_force_manual() {
     // a null sampler is safely ignored
     GGML_ASSERT(!common_reasoning_budget_force(nullptr));
 
-    fprintf(stderr, "  Test 'manual force transition' passed\n");
+    if(0) fprintf(stderr, "  Test 'manual force transition' passed\n");
 }
 
 static void test_reasoning_budget_end_match() {
@@ -330,7 +330,7 @@ static void test_reasoning_budget_end_match() {
     // a null sampler is safely ignored
     GGML_ASSERT(common_reasoning_budget_get_end_match(nullptr) == nullptr);
 
-    fprintf(stderr, "  Test 'matched end sequence' passed\n");
+    if(0) fprintf(stderr, "  Test 'matched end sequence' passed\n");
 }
 
 // UTF-8 boundary detection unit test

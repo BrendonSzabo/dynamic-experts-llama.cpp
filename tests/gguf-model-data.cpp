@@ -231,7 +231,7 @@ static std::optional<gguf_remote_model> gguf_parse_meta(const std::vector<char> 
         return std::nullopt;
     }
     if (memcmp(&magic_raw, "GGUF", 4) != 0) {
-        fprintf(stderr, "gguf_parse_meta: invalid magic\n");
+        if(0) fprintf(stderr, "gguf_parse_meta: invalid magic\n");
         return std::nullopt;
     }
 
@@ -240,7 +240,7 @@ static std::optional<gguf_remote_model> gguf_parse_meta(const std::vector<char> 
         return std::nullopt;
     }
     if (version < 2 || version > 3) {
-        fprintf(stderr, "gguf_parse_meta: unsupported version %u\n", version);
+        if(0) fprintf(stderr, "gguf_parse_meta: unsupported version %u\n", version);
         return std::nullopt;
     }
 
@@ -338,7 +338,7 @@ static std::optional<gguf_remote_model> gguf_parse_meta(const std::vector<char> 
         }
 
         if (t.n_dims > 4) {
-            fprintf(stderr, "gguf_parse_meta: tensor '%s' has %u dims (max 4)\n", t.name.c_str(), t.n_dims);
+            if(0) fprintf(stderr, "gguf_parse_meta: tensor '%s' has %u dims (max 4)\n", t.name.c_str(), t.n_dims);
             return std::nullopt;
         }
 
@@ -431,13 +431,13 @@ static std::pair<long, std::vector<char>> gguf_http_get(
             }, nullptr);
 
         if (!res) {
-            fprintf(stderr, "gguf_fetch: HTTP request failed for %s (error %d)\n",
+            if(0) fprintf(stderr, "gguf_fetch: HTTP request failed for %s (error %d)\n",
                     url.c_str(), (int)res.error());
             return {-1, {}};
         }
         return {res->status, std::move(body)};
     } catch (const std::exception & e) {
-        fprintf(stderr, "gguf_fetch: HTTP error: %s\n", e.what());
+        if(0) fprintf(stderr, "gguf_fetch: HTTP error: %s\n", e.what());
         return {-1, {}};
     }
 }
@@ -452,7 +452,7 @@ static std::string detect_gguf_filename(const std::string & repo, const std::str
 
     auto [code, body] = gguf_http_get(api_url, {}, 30);
     if (code != 200 || body.empty()) {
-        fprintf(stderr, "gguf_fetch: failed to query HF API for %s (HTTP %ld)\n", repo.c_str(), code);
+        if(0) fprintf(stderr, "gguf_fetch: failed to query HF API for %s (HTTP %ld)\n", repo.c_str(), code);
         return "";
     }
 
@@ -460,12 +460,12 @@ static std::string detect_gguf_filename(const std::string & repo, const std::str
     try {
         j = nlohmann::json::parse(body.begin(), body.end());
     } catch (...) {
-        fprintf(stderr, "gguf_fetch: failed to parse HF API response\n");
+        if(0) fprintf(stderr, "gguf_fetch: failed to parse HF API response\n");
         return "";
     }
 
     if (!j.contains("siblings") || !j["siblings"].is_array()) {
-        fprintf(stderr, "gguf_fetch: unexpected HF API response format\n");
+        if(0) fprintf(stderr, "gguf_fetch: unexpected HF API response format\n");
         return "";
     }
 
@@ -488,7 +488,7 @@ static std::string detect_gguf_filename(const std::string & repo, const std::str
     }
 
     if (matches.empty()) {
-        fprintf(stderr, "gguf_fetch: no .gguf files matching '%s' in %s\n", quant.c_str(), repo.c_str());
+        if(0) fprintf(stderr, "gguf_fetch: no .gguf files matching '%s' in %s\n", quant.c_str(), repo.c_str());
         return "";
     }
 
@@ -527,7 +527,7 @@ static std::optional<gguf_remote_model> fetch_and_parse(
 
     while (chunk_size <= max_chunk) {
         if (verbose) {
-            fprintf(stderr, "gguf_fetch: downloading %zu bytes from %s\n", chunk_size, filename.c_str());
+            if(0) fprintf(stderr, "gguf_fetch: downloading %zu bytes from %s\n", chunk_size, filename.c_str());
         }
 
         char range_buf[64];
@@ -536,12 +536,12 @@ static std::optional<gguf_remote_model> fetch_and_parse(
 
         auto [code, body] = gguf_http_get(url, headers, 120);
         if (code != 200 && code != 206) {
-            fprintf(stderr, "gguf_fetch: HTTP %ld fetching %s\n", code, url.c_str());
+            if(0) fprintf(stderr, "gguf_fetch: HTTP %ld fetching %s\n", code, url.c_str());
             return std::nullopt;
         }
 
         if (body.empty()) {
-            fprintf(stderr, "gguf_fetch: empty response\n");
+            if(0) fprintf(stderr, "gguf_fetch: empty response\n");
             return std::nullopt;
         }
 
@@ -552,7 +552,7 @@ static std::optional<gguf_remote_model> fetch_and_parse(
         }
 
         if (code == 200) {
-            fprintf(stderr, "gguf_fetch: server returned full response but metadata parse failed\n");
+            if(0) fprintf(stderr, "gguf_fetch: server returned full response but metadata parse failed\n");
             return std::nullopt;
         }
 
@@ -560,7 +560,7 @@ static std::optional<gguf_remote_model> fetch_and_parse(
         chunk_size *= 2;
     }
 
-    fprintf(stderr, "gguf_fetch: metadata exceeds 64MB, giving up\n");
+    if(0) fprintf(stderr, "gguf_fetch: metadata exceeds 64MB, giving up\n");
     return std::nullopt;
 }
 
@@ -584,7 +584,7 @@ static std::optional<gguf_remote_model> fetch_or_cached(
             auto result = gguf_parse_meta(cached);
             if (result.has_value()) {
                 if (verbose) {
-                    fprintf(stderr, "gguf_fetch: loaded from cache: %s\n", cache_path.c_str());
+                    if(0) fprintf(stderr, "gguf_fetch: loaded from cache: %s\n", cache_path.c_str());
                 }
                 return result;
             }
@@ -611,7 +611,7 @@ std::optional<gguf_remote_model> gguf_fetch_model_meta(
 
     auto model_opt = fetch_or_cached(repo, filename, cdir, repo_part, verbose);
     if (!model_opt.has_value()) {
-        fprintf(stderr, "gguf_fetch: failed to fetch %s\n", filename.c_str());
+        if(0) fprintf(stderr, "gguf_fetch: failed to fetch %s\n", filename.c_str());
         return std::nullopt;
     }
 
@@ -620,12 +620,12 @@ std::optional<gguf_remote_model> gguf_fetch_model_meta(
     // If the model is split across multiple files we need to fetch the remaining shards metadata
     if (model.n_split > 1) {
         if (split_prefix.empty()) {
-            fprintf(stderr, "gguf_fetch: model reports %u splits but filename has no split pattern\n", model.n_split);
+            if(0) fprintf(stderr, "gguf_fetch: model reports %u splits but filename has no split pattern\n", model.n_split);
             return std::nullopt;
         }
 
         if (verbose) {
-            fprintf(stderr, "gguf_fetch: split model with %u shards, fetching remaining %u...\n",
+            if(0) fprintf(stderr, "gguf_fetch: split model with %u shards, fetching remaining %u...\n",
                     model.n_split, model.n_split - 1);
         }
 
@@ -638,7 +638,7 @@ std::optional<gguf_remote_model> gguf_fetch_model_meta(
 
             auto shard = fetch_or_cached(repo, shard_name, cdir, repo_part, verbose);
             if (!shard.has_value()) {
-                fprintf(stderr, "gguf_fetch: failed to fetch shard %d: %s\n", i, shard_name.c_str());
+                if(0) fprintf(stderr, "gguf_fetch: failed to fetch shard %d: %s\n", i, shard_name.c_str());
                 return std::nullopt;
             }
 
@@ -648,7 +648,7 @@ std::optional<gguf_remote_model> gguf_fetch_model_meta(
         }
 
         if (model.n_split_tensors > 0 && model.tensors.size() != model.n_split_tensors) {
-            fprintf(stderr, "gguf_fetch: WARNING: expected %u tensors from split.tensors.count, got %zu\n",
+            if(0) fprintf(stderr, "gguf_fetch: WARNING: expected %u tensors from split.tensors.count, got %zu\n",
                     model.n_split_tensors, model.tensors.size());
         }
     }
@@ -673,7 +673,7 @@ gguf_context_ptr gguf_fetch_gguf_ctx(
 
     auto model_opt = fetch_or_cached(repo, filename, cdir, repo_part, verbose);
     if (!model_opt.has_value()) {
-        fprintf(stderr, "gguf_fetch: failed to fetch %s\n", filename.c_str());
+        if(0) fprintf(stderr, "gguf_fetch: failed to fetch %s\n", filename.c_str());
         return nullptr;
     }
 
@@ -688,19 +688,19 @@ gguf_context_ptr gguf_fetch_gguf_ctx(
     ggml_ctx_ptr.reset(ggml_ctx);
 
     if (ctx == nullptr) {
-        fprintf(stderr, "gguf_fetch: gguf_init_from_file failed\n");
+        if(0) fprintf(stderr, "gguf_fetch: gguf_init_from_file failed\n");
         return nullptr;
     }
 
     // If the model is split across multiple files we need to fetch the remaining shards metadata
     if (model.n_split > 1) {
         if (split_prefix.empty()) {
-            fprintf(stderr, "gguf_fetch: model reports %u splits but filename has no split pattern\n", model.n_split);
+            if(0) fprintf(stderr, "gguf_fetch: model reports %u splits but filename has no split pattern\n", model.n_split);
             return nullptr;
         }
 
         if (verbose) {
-            fprintf(stderr, "gguf_fetch: split model with %u shards, fetching remaining %u...\n",
+            if(0) fprintf(stderr, "gguf_fetch: split model with %u shards, fetching remaining %u...\n",
                     model.n_split, model.n_split - 1);
         }
 
@@ -713,7 +713,7 @@ gguf_context_ptr gguf_fetch_gguf_ctx(
 
             auto shard = fetch_or_cached(repo, shard_name, cdir, repo_part, verbose);
             if (!shard.has_value()) {
-                fprintf(stderr, "gguf_fetch: failed to fetch shard %d: %s\n", i, shard_name.c_str());
+                if(0) fprintf(stderr, "gguf_fetch: failed to fetch shard %d: %s\n", i, shard_name.c_str());
                 return nullptr;
             }
 
@@ -726,7 +726,7 @@ gguf_context_ptr gguf_fetch_gguf_ctx(
             shard_ggml_ctx_ptr.reset(shard_ggml_ctx);
 
             if (shard_ctx == nullptr) {
-                fprintf(stderr, "gguf_fetch: shard gguf_init_from_file failed\n");
+                if(0) fprintf(stderr, "gguf_fetch: shard gguf_init_from_file failed\n");
                 return nullptr;
             }
 

@@ -89,7 +89,7 @@ int main(int argc, char ** argv) {
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
 
     if (model == NULL) {
-        fprintf(stderr , "%s: error: unable to load model\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: unable to load model\n" , __func__);
         return 1;
     }
 
@@ -102,7 +102,7 @@ int main(int argc, char ** argv) {
     // allocate space for the tokens and tokenize the prompt
     std::vector<llama_token> prompt_tokens(n_prompt);
     if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), prompt_tokens.data(), prompt_tokens.size(), true, true) < 0) {
-        fprintf(stderr, "%s: error: failed to tokenize the prompt\n", __func__);
+        if(0) fprintf(stderr, "%s: error: failed to tokenize the prompt\n", __func__);
         return 1;
     }
 
@@ -119,7 +119,7 @@ int main(int argc, char ** argv) {
     llama_context * ctx = llama_init_from_model(model, ctx_params);
 
     if (ctx == NULL) {
-        fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         return 1;
     }
 
@@ -137,7 +137,7 @@ int main(int argc, char ** argv) {
         char buf[128];
         int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
         if (n < 0) {
-            fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
+            if(0) fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
             return 1;
         }
         std::string s(buf, n);
@@ -150,7 +150,7 @@ int main(int argc, char ** argv) {
 
     if (llama_model_has_encoder(model)) {
         if (llama_encode(ctx, batch)) {
-            fprintf(stderr, "%s : failed to eval\n", __func__);
+            if(0) fprintf(stderr, "%s : failed to eval\n", __func__);
             return 1;
         }
 
@@ -171,7 +171,7 @@ int main(int argc, char ** argv) {
     for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + n_predict; ) {
         // evaluate the current batch with the transformer model
         if (llama_decode(ctx, batch)) {
-            fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
+            if(0) fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
         }
 
@@ -189,7 +189,7 @@ int main(int argc, char ** argv) {
             char buf[128];
             int n = llama_token_to_piece(vocab, new_token_id, buf, sizeof(buf), 0, true);
             if (n < 0) {
-                fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
+                if(0) fprintf(stderr, "%s: error: failed to convert token to piece\n", __func__);
                 return 1;
             }
             std::string s(buf, n);
@@ -207,13 +207,13 @@ int main(int argc, char ** argv) {
 
     const auto t_main_end = ggml_time_us();
 
-    fprintf(stderr, "%s: decoded %d tokens in %.2f s, speed: %.2f t/s\n",
+    if(0) fprintf(stderr, "%s: decoded %d tokens in %.2f s, speed: %.2f t/s\n",
             __func__, n_decode, (t_main_end - t_main_start) / 1000000.0f, n_decode / ((t_main_end - t_main_start) / 1000000.0f));
 
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
     llama_perf_sampler_print(smpl);
     llama_perf_context_print(ctx);
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
 
     llama_sampler_free(smpl);
     llama_free(ctx);

@@ -760,7 +760,7 @@ static bool common_params_parse_ex(int argc, char ** argv, common_params_context
             auto opt = *tmp.first;
             bool is_positive = tmp.second;
             if (opt.has_value_from_env()) {
-                fprintf(stderr, "warn: %s environment variable is set, but will be overwritten by command line argument %s\n", opt.env, arg.c_str());
+                if(0) fprintf(stderr, "warn: %s environment variable is set, but will be overwritten by command line argument %s\n", opt.env, arg.c_str());
             }
             try {
                 if (opt.handler_void) {
@@ -1231,11 +1231,11 @@ bool common_params_parse(int argc, char ** argv, common_params & params, llama_e
         }
         params.lr.init();
     } catch (const std::invalid_argument & ex) {
-        fprintf(stderr, "%s\n", ex.what());
+        if(0) fprintf(stderr, "%s\n", ex.what());
         ctx_arg.params = params_org;
         return false;
     } catch (std::exception & ex) {
-        fprintf(stderr, "%s\n", ex.what());
+        if(0) fprintf(stderr, "%s\n", ex.what());
         exit(1); // for other exceptions, we exit with status code 1
     }
 
@@ -1370,8 +1370,8 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         {"--version"},
         "show version and build info",
         [](common_params &) {
-            fprintf(stderr, "version: %d (%s)\n", llama_build_number(), llama_commit());
-            fprintf(stderr, "built with %s for %s\n", llama_compiler(), llama_build_target());
+            if(0) fprintf(stderr, "version: %d (%s)\n", llama_build_number(), llama_commit());
+            if(0) fprintf(stderr, "built with %s for %s\n", llama_compiler(), llama_build_target());
             exit(0);
         }
     ));
@@ -1757,7 +1757,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             std::ostringstream ss;
             ss << file.rdbuf();
             params.prompt = ss.str();
-            fprintf(stderr, "Read %zu bytes from binary file %s\n", params.prompt.size(), value.c_str());
+            if(0) fprintf(stderr, "Read %zu bytes from binary file %s\n", params.prompt.size(), value.c_str());
         }
     ).set_excludes({LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
@@ -2680,9 +2680,9 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 params.n_gpu_layers = std::stoi(value);
             }
             if (!llama_supports_gpu_offload()) {
-                fprintf(stderr, "warning: no usable GPU found, --gpu-layers option will be ignored\n");
-                fprintf(stderr, "warning: one possible reason is that llama.cpp was compiled without GPU support\n");
-                fprintf(stderr, "warning: consult docs/build.md for compilation instructions\n");
+                if(0) fprintf(stderr, "warning: no usable GPU found, --gpu-layers option will be ignored\n");
+                if(0) fprintf(stderr, "warning: one possible reason is that llama.cpp was compiled without GPU support\n");
+                if(0) fprintf(stderr, "warning: consult docs/build.md for compilation instructions\n");
             }
         }
     ).set_env("LLAMA_ARG_N_GPU_LAYERS"));
@@ -2706,7 +2706,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 throw std::invalid_argument("invalid value");
             }
             if (!llama_supports_gpu_offload()) {
-                fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting the split mode has no effect.\n");
+                if(0) fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting the split mode has no effect.\n");
             }
         }
     ).set_env("LLAMA_ARG_SPLIT_MODE"));
@@ -2733,7 +2733,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 }
             }
             if (!llama_supports_gpu_offload()) {
-                fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting a tensor split has no effect.\n");
+                if(0) fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting a tensor split has no effect.\n");
             }
         }
     ).set_env("LLAMA_ARG_TENSOR_SPLIT"));
@@ -2743,7 +2743,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         [](common_params & params, int value) {
             params.main_gpu = value;
             if (!llama_supports_gpu_offload()) {
-                fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting the main GPU has no effect.\n");
+                if(0) fprintf(stderr, "warning: llama.cpp was compiled without support for GPU offload. Setting the main GPU has no effect.\n");
             }
         }
     ).set_env("LLAMA_ARG_MAIN_GPU"));
@@ -3751,7 +3751,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             std::error_code ec;
             std::filesystem::create_directories(value, ec);
             if (ec) {
-                fprintf(stderr, "warning: failed to create prompts-log-dir '%s': %s\n", value.c_str(), ec.message().c_str());
+                if(0) fprintf(stderr, "warning: failed to create prompts-log-dir '%s': %s\n", value.c_str(), ec.message().c_str());
             }
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}));
@@ -4052,9 +4052,9 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
                 params.speculative.draft.n_gpu_layers = std::stoi(value);
             }
             if (!llama_supports_gpu_offload()) {
-                fprintf(stderr, "warning: no usable GPU found, --gpu-layers-draft option will be ignored\n");
-                fprintf(stderr, "warning: one possible reason is that llama.cpp was compiled without GPU support\n");
-                fprintf(stderr, "warning: consult docs/build.md for compilation instructions\n");
+                if(0) fprintf(stderr, "warning: no usable GPU found, --gpu-layers-draft option will be ignored\n");
+                if(0) fprintf(stderr, "warning: one possible reason is that llama.cpp was compiled without GPU support\n");
+                if(0) fprintf(stderr, "warning: consult docs/build.md for compilation instructions\n");
             }
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_N_GPU_LAYERS_DRAFT"));

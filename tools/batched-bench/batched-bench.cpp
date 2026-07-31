@@ -48,7 +48,7 @@ int llama_batched_bench(int argc, char ** argv) {
     llama_model * model = llama_model_load_from_file(params.model.path.c_str(), model_params);
 
     if (model == NULL) {
-        fprintf(stderr , "%s: error: unable to load model\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: unable to load model\n" , __func__);
         return 1;
     }
 
@@ -60,7 +60,7 @@ int llama_batched_bench(int argc, char ** argv) {
     llama_context * ctx = llama_init_from_model(model, ctx_params);
 
     if (ctx == NULL) {
-        fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
+        if(0) fprintf(stderr , "%s: error: failed to create the llama_context\n" , __func__);
         llama_model_free(model);
         return 1;
     }

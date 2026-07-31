@@ -48,27 +48,27 @@ struct error_stats {
 
 static void quantize_stats_print_usage(int /*argc*/, char ** argv) {
     quantize_stats_params params;
-    fprintf(stderr, "usage: %s [options]\n", argv[0]);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help            show this help message and exit\n");
-    fprintf(stderr, "  -m FNAME, --model FNAME\n");
-    fprintf(stderr, "                        model path (default: %s)\n", params.model.c_str());
-    fprintf(stderr, "  -r, --reference\n");
-    fprintf(stderr, "                        use reference implementation (default: false)\n");
-    fprintf(stderr, "  -v, --verbose\n");
-    fprintf(stderr, "                        verbose output (default: false)\n");
-    fprintf(stderr, "  -p, --per-layer-stats\n");
-    fprintf(stderr, "                        print stats per layer (default: false)\n");
-    fprintf(stderr, "  --histogram\n");
-    fprintf(stderr, "                        print error histogram (default: false)\n");
-    fprintf(stderr, "  -l LAYER, --include-layer LAYER\n");
-    fprintf(stderr, "                        only test layers matching pattern\n");
-    fprintf(stderr, "  -L LAYER, --exclude-layer LAYER\n");
-    fprintf(stderr, "                        exclude layers matching pattern\n");
-    fprintf(stderr, "  -t TYPE, --type TYPE\n");
-    fprintf(stderr, "                        only test given type (q4_0, q4_1)\n");
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "usage: %s [options]\n", argv[0]);
+    if(0) fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "options:\n");
+    if(0) fprintf(stderr, "  -h, --help            show this help message and exit\n");
+    if(0) fprintf(stderr, "  -m FNAME, --model FNAME\n");
+    if(0) fprintf(stderr, "                        model path (default: %s)\n", params.model.c_str());
+    if(0) fprintf(stderr, "  -r, --reference\n");
+    if(0) fprintf(stderr, "                        use reference implementation (default: false)\n");
+    if(0) fprintf(stderr, "  -v, --verbose\n");
+    if(0) fprintf(stderr, "                        verbose output (default: false)\n");
+    if(0) fprintf(stderr, "  -p, --per-layer-stats\n");
+    if(0) fprintf(stderr, "                        print stats per layer (default: false)\n");
+    if(0) fprintf(stderr, "  --histogram\n");
+    if(0) fprintf(stderr, "                        print error histogram (default: false)\n");
+    if(0) fprintf(stderr, "  -l LAYER, --include-layer LAYER\n");
+    if(0) fprintf(stderr, "                        only test layers matching pattern\n");
+    if(0) fprintf(stderr, "  -L LAYER, --exclude-layer LAYER\n");
+    if(0) fprintf(stderr, "                        exclude layers matching pattern\n");
+    if(0) fprintf(stderr, "  -t TYPE, --type TYPE\n");
+    if(0) fprintf(stderr, "                        only test given type (q4_0, q4_1)\n");
+    if(0) fprintf(stderr, "\n");
 }
 
 // Check if a layer is included/excluded by command line
@@ -280,7 +280,7 @@ int main(int argc, char ** argv) {
             if (j < GGML_TYPE_COUNT) {
                 params.include_types.push_back((ggml_type) j);
             } else {
-                fprintf(stderr, "error: %s not in list of types\n", argv[i]);
+                if(0) fprintf(stderr, "error: %s not in list of types\n", argv[i]);
                 invalid_param = true;
             }
         } else if (arg == "-n" || arg == "--num-threads") {
@@ -290,13 +290,13 @@ int main(int argc, char ** argv) {
             }
             max_thread = atoi(argv[i]);
         } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            if(0) fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             quantize_stats_print_usage(argc, argv);
             return 1;
         }
     }
     if (invalid_param) {
-        fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
+        if(0) fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
         quantize_stats_print_usage(argc, argv);
         return 1;
     }
@@ -304,7 +304,7 @@ int main(int argc, char ** argv) {
     llama_print_build_info();
 
     // load the model
-    fprintf(stderr, "Loading model\n");
+    if(0) fprintf(stderr, "Loading model\n");
 
     const int64_t t_main_start_us = ggml_time_us();
     llama_model * model;
@@ -317,7 +317,7 @@ int main(int argc, char ** argv) {
         model = llama_model_load_from_file(params.model.c_str(), mparams);
 
         if (model == NULL) {
-            fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to load model '%s'\n", __func__, params.model.c_str());
             return 1;
         }
 
@@ -327,7 +327,7 @@ int main(int argc, char ** argv) {
         ctx = llama_init_from_model(model, cparams);
 
         if (ctx == NULL) {
-            fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, params.model.c_str());
+            if(0) fprintf(stderr, "%s: error: failed to create context with model '%s'\n", __func__, params.model.c_str());
             llama_model_free(model);
             return 1;
         }
@@ -349,7 +349,7 @@ int main(int argc, char ** argv) {
         if (kv_tensor.second->type == GGML_TYPE_F16) {
             is_f16 = true;
         } else if (kv_tensor.second->type != GGML_TYPE_F32) {
-            fprintf(stderr, "%s: error: Quantization should be tested with a float model, "
+            if(0) fprintf(stderr, "%s: error: Quantization should be tested with a float model, "
                 "this model contains already quantized layers (%s is type %d)\n", __func__, kv_tensor.first.c_str(), kv_tensor.second->type);
             llama_free(ctx);
             llama_model_free(model);

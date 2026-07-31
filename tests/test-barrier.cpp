@@ -40,7 +40,7 @@ static void test_barrier(int n_threads, int n_rounds) {
     struct ggml_threadpool_params tpp  = ggml_threadpool_params_default(n_threads);
     struct ggml_threadpool* threadpool = ggml_threadpool_new(&tpp);
     if (!threadpool) {
-        fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
+        if(0) fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
         exit(1);
     }
 
@@ -108,7 +108,7 @@ static void test_active(int n_threads, int n_rounds) {
     struct ggml_threadpool_params tpp  = ggml_threadpool_params_default(n_threads);
     struct ggml_threadpool* threadpool = ggml_threadpool_new(&tpp);
     if (!threadpool) {
-        fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
+        if(0) fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
         exit(1);
     }
 
@@ -181,7 +181,7 @@ static void test_multi_graph(int n_threads, int n_rounds) {
     struct ggml_threadpool_params tpp  = ggml_threadpool_params_default(n_threads);
     struct ggml_threadpool* threadpool = ggml_threadpool_new(&tpp);
     if (!threadpool) {
-        fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
+        if(0) fprintf(stderr, "threadpool create failed : n_threads %d\n", n_threads);
         exit(1);
     }
 

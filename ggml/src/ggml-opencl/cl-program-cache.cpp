@@ -298,7 +298,7 @@ static int g_cache_hits = 0, g_cache_misses = 0, g_cache_saves = 0;
 static void cache_debug_line(const char * kind, const std::string & key,
                              const char * source, const std::string & opts) {
     if (!cache_debug_enabled()) { return; }
-    fprintf(stderr, "ggml_opencl: cache %-4s [h=%d m=%d s=%d] key=%s src=%zuB opts='%s'\n",
+    if(0) fprintf(stderr, "ggml_opencl: cache %-4s [h=%d m=%d s=%d] key=%s src=%zuB opts='%s'\n",
             kind, g_cache_hits, g_cache_misses, g_cache_saves,
             key.substr(0, 16).c_str(), strlen(source), opts_preview(opts).c_str());
     fflush(stderr);
@@ -312,7 +312,7 @@ cl_program_cache_state cl_program_cache_init(cl_device_id device) {
                 !std::strcmp(env, "none") || !std::strcmp(env, "disable") ||
                 !std::strcmp(env, "disabled"))) {
         if (cache_debug_enabled()) {
-            fprintf(stderr, "ggml_opencl: kernel cache disabled by GGML_OPENCL_KERNEL_CACHE_DIR=%s\n", env);
+            if(0) fprintf(stderr, "ggml_opencl: kernel cache disabled by GGML_OPENCL_KERNEL_CACHE_DIR=%s\n", env);
             fflush(stderr);
         }
         return st;
@@ -338,7 +338,7 @@ cl_program_cache_state cl_program_cache_init(cl_device_id device) {
     st.key_suffix = compute_key_suffix(device);
     GGML_LOG_INFO("ggml_opencl: kernel cache enabled at '%s'\n", st.dir.c_str());
     if (cache_debug_enabled()) {
-        fprintf(stderr, "ggml_opencl: kernel cache enabled at '%s' "
+        if(0) fprintf(stderr, "ggml_opencl: kernel cache enabled at '%s' "
                         "(GGML_OPENCL_KERNEL_CACHE_DIR=off to disable)\n", st.dir.c_str());
         fflush(stderr);
     }

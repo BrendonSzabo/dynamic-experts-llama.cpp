@@ -247,7 +247,7 @@ int main(int argc, char ** argv) {
     llama_perf_sampler_print(sampler_configs[0].sampler);
     llama_perf_context_print(ctx);
 
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "\n");
 
     llama_batch_free(batch);
 

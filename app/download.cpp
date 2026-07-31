@@ -33,7 +33,7 @@ int llama_download(int argc, char ** argv) {
     const bool has_source = !params.model.hf_repo.empty() || !params.model.url.empty() ||
                             !params.model.path.empty()    || !params.model.docker_repo.empty();
     if (!has_source) {
-        fprintf(stderr, "error: no model source specified (use --hf-repo, --model-url, --model or --docker-repo)\n");
+        if(0) fprintf(stderr, "error: no model source specified (use --hf-repo, --model-url, --model or --docker-repo)\n");
         return 1;
     }
 
@@ -41,7 +41,7 @@ int llama_download(int argc, char ** argv) {
         common_models_handler handler = common_models_handler_init(params, LLAMA_EXAMPLE_DOWNLOAD);
         common_models_handler_apply(handler, params);
     } catch (const std::exception & e) {
-        fprintf(stderr, "error: %s\n", e.what());
+        if(0) fprintf(stderr, "error: %s\n", e.what());
         return 1;
     }
 
@@ -51,11 +51,11 @@ int llama_download(int argc, char ** argv) {
         return 0;
     }
     if (params.model.path.empty()) {
-        fprintf(stderr, "error: model download failed\n");
+        if(0) fprintf(stderr, "error: model download failed\n");
         return 1;
     }
     if (!std::filesystem::exists(params.model.path)) {
-        fprintf(stderr, "error: model file does not exist: %s\n", params.model.path.c_str());
+        if(0) fprintf(stderr, "error: model file does not exist: %s\n", params.model.path.c_str());
         return 1;
     }
 

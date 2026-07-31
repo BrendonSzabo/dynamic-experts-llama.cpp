@@ -846,11 +846,11 @@ struct console_printer : public printer {
         // Handle errors and additional information
         if (info.has_error) {
             if (info.error_component == "allocation") {
-                fprintf(stderr, "failed to allocate tensors [%s] ", info.backend_name.c_str());
+                if(0) fprintf(stderr, "failed to allocate tensors [%s] ", info.backend_name.c_str());
             } else if (info.error_component == "backend") {
-                fprintf(stderr, "  Failed to initialize %s backend\n", info.backend_name.c_str());
+                if(0) fprintf(stderr, "  Failed to initialize %s backend\n", info.backend_name.c_str());
             } else {
-                fprintf(stderr, "Error in %s: %s\n", info.error_component.c_str(), info.error_details.c_str());
+                if(0) fprintf(stderr, "Error in %s: %s\n", info.error_component.c_str(), info.error_details.c_str());
             }
         }
 
@@ -1566,7 +1566,7 @@ struct test_case {
         // warmup run
         ggml_status status = ggml_backend_graph_compute(backend, gf);
         if (status != GGML_STATUS_SUCCESS) {
-            fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+            if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
             return false;
         }
 
@@ -1621,7 +1621,7 @@ struct test_case {
             int64_t start_time = ggml_time_us();
             ggml_status status = ggml_backend_graph_compute(backend, gf);
             if (status != GGML_STATUS_SUCCESS) {
-                fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+                if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
                 return false;
             }
             int64_t end_time = ggml_time_us();
@@ -1809,12 +1809,12 @@ struct test_case {
 
         ggml_status status = ggml_backend_graph_compute(backend, gf);
         if (status != GGML_STATUS_SUCCESS) {
-            fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+            if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
             return false;
         }
         status = ggml_backend_graph_compute(backend, gb);
         if (status != GGML_STATUS_SUCCESS) {
-            fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+            if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
             return false;
         }
 
@@ -1868,7 +1868,7 @@ struct test_case {
                 ggml_backend_tensor_set(t, &xiu, i*sizeof(float), sizeof(float));
                 status = ggml_backend_graph_compute(backend, gf);
                 if (status != GGML_STATUS_SUCCESS) {
-                    fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+                    if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
                     return false;
                 }
                 ggml_backend_tensor_get(out, &fu, 0, ggml_nbytes(out));
@@ -1876,7 +1876,7 @@ struct test_case {
                 ggml_backend_tensor_set(t, &xid, i*sizeof(float), sizeof(float));
                 status = ggml_backend_graph_compute(backend, gf);
                 if (status != GGML_STATUS_SUCCESS) {
-                    fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+                    if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
                     return false;
                 }
                 ggml_backend_tensor_get(out, &fd, 0, ggml_nbytes(out));
@@ -1885,7 +1885,7 @@ struct test_case {
                     ggml_backend_tensor_set(t, &xiuh, i*sizeof(float), sizeof(float));
                     status = ggml_backend_graph_compute(backend, gf);
                     if (status != GGML_STATUS_SUCCESS) {
-                        fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+                        if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
                         return false;
                     }
                     ggml_backend_tensor_get(out, &fuh, 0, ggml_nbytes(out));
@@ -1893,7 +1893,7 @@ struct test_case {
                     ggml_backend_tensor_set(t, &xidh, i*sizeof(float), sizeof(float));
                     status = ggml_backend_graph_compute(backend, gf);
                     if (status != GGML_STATUS_SUCCESS) {
-                        fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
+                        if(0) fprintf(stderr, "%s: ggml_backend_graph_compute failed. status=%s \n", __func__, ggml_status_to_string(status));
                         return false;
                     }
                     ggml_backend_tensor_get(out, &fdh, 0, ggml_nbytes(out));

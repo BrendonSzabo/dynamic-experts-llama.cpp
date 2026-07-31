@@ -35,7 +35,7 @@ static void ggml_et_dump_tensor_metadata(const ggml_tensor * ggtensor, size_t in
     char * spaces = (char *) alloca(indent_level + 1);
     memset(spaces, ' ', indent_level);
     spaces[indent_level] = '\0';
-    fprintf(stderr,
+    if(0) fprintf(stderr,
             "%s%s: %s\n"
             "%s  type: %s\n"
             "%s  ne: %lld %lld %lld %lld\n"

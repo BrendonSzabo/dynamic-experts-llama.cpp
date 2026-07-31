@@ -178,15 +178,15 @@ struct rpc_server_params {
 };
 
 static void print_usage(int /*argc*/, char ** argv, rpc_server_params params) {
-    fprintf(stderr, "Usage: %s [options]\n\n", argv[0]);
-    fprintf(stderr, "options:\n");
-    fprintf(stderr, "  -h, --help                       show this help message and exit\n");
-    fprintf(stderr, "  -t, --threads N                  number of threads for the CPU device (default: %d)\n", params.n_threads);
-    fprintf(stderr, "  -d, --device <dev1,dev2,...>     comma-separated list of devices\n");
-    fprintf(stderr, "  -H, --host HOST                  host to bind to (default: %s)\n", params.host.c_str());
-    fprintf(stderr, "  -p, --port PORT                  port to bind to (default: %d)\n", params.port);
-    fprintf(stderr, "  -c, --cache                      enable local file cache\n");
-    fprintf(stderr, "\n");
+    if(0) fprintf(stderr, "Usage: %s [options]\n\n", argv[0]);
+    if(0) fprintf(stderr, "options:\n");
+    if(0) fprintf(stderr, "  -h, --help                       show this help message and exit\n");
+    if(0) fprintf(stderr, "  -t, --threads N                  number of threads for the CPU device (default: %d)\n", params.n_threads);
+    if(0) fprintf(stderr, "  -d, --device <dev1,dev2,...>     comma-separated list of devices\n");
+    if(0) fprintf(stderr, "  -H, --host HOST                  host to bind to (default: %s)\n", params.host.c_str());
+    if(0) fprintf(stderr, "  -p, --port PORT                  port to bind to (default: %d)\n", params.port);
+    if(0) fprintf(stderr, "  -c, --cache                      enable local file cache\n");
+    if(0) fprintf(stderr, "\n");
 }
 
 static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & params) {
@@ -204,7 +204,7 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & 
             }
             params.n_threads = std::stoi(argv[i]);
             if (params.n_threads <= 0) {
-                fprintf(stderr, "error: invalid number of threads: %d\n", params.n_threads);
+                if(0) fprintf(stderr, "error: invalid number of threads: %d\n", params.n_threads);
                 return false;
             }
         } else if (arg == "-d" || arg == "--device") {
@@ -219,7 +219,7 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & 
                 try {
                     params.devices.push_back(*iter);
                 } catch (const std::exception & ) {
-                    fprintf(stderr, "error: invalid device: %s\n", iter->str().c_str());
+                    if(0) fprintf(stderr, "error: invalid device: %s\n", iter->str().c_str());
                     return false;
                 }
             }
@@ -237,7 +237,7 @@ static bool rpc_server_params_parse(int argc, char ** argv, rpc_server_params & 
             print_usage(argc, argv, params);
             exit(0);
         } else {
-            fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
+            if(0) fprintf(stderr, "error: unknown argument: %s\n", arg.c_str());
             print_usage(argc, argv, params);
             exit(0);
         }
@@ -253,8 +253,8 @@ static std::vector<ggml_backend_dev_t> get_devices(const rpc_server_params & par
             if (dev) {
                 devices.push_back(dev);
             } else {
-                fprintf(stderr, "error: unknown device: %s\n", device.c_str());
-                fprintf(stderr, "available devices:\n");
+                if(0) fprintf(stderr, "error: unknown device: %s\n", device.c_str());
+                if(0) fprintf(stderr, "available devices:\n");
                 for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
                     auto * dev = ggml_backend_dev_get(i);
                     size_t free, total;
@@ -294,23 +294,23 @@ int main(int argc, char * argv[]) {
 
     rpc_server_params params;
     if (!rpc_server_params_parse(argc, argv, params)) {
-        fprintf(stderr, "Invalid parameters\n");
+        if(0) fprintf(stderr, "Invalid parameters\n");
         return 1;
     }
 
     if (params.host != "127.0.0.1") {
-        fprintf(stderr, "\n");
-        fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-        fprintf(stderr, "WARNING: Host ('%s') is != '127.0.0.1'\n", params.host.c_str());
-        fprintf(stderr, "         Never expose the RPC server to an open network!\n");
-        fprintf(stderr, "         This is an experimental feature and is not secure!\n");
-        fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
-        fprintf(stderr, "\n");
+        if(0) fprintf(stderr, "\n");
+        if(0) fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        if(0) fprintf(stderr, "WARNING: Host ('%s') is != '127.0.0.1'\n", params.host.c_str());
+        if(0) fprintf(stderr, "         Never expose the RPC server to an open network!\n");
+        if(0) fprintf(stderr, "         This is an experimental feature and is not secure!\n");
+        if(0) fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
+        if(0) fprintf(stderr, "\n");
     }
 
     auto devices = get_devices(params);
     if (devices.empty()) {
-        fprintf(stderr, "No devices found\n");
+        if(0) fprintf(stderr, "No devices found\n");
         return 1;
     }
     std::string endpoint = params.host + ":" + std::to_string(params.port);
@@ -319,7 +319,7 @@ int main(int argc, char * argv[]) {
     if (params.use_cache) {
         cache_dir_str = fs_get_cache_directory() + "rpc" + DIRECTORY_SEPARATOR;
         if (!fs_create_directory_with_parents(cache_dir_str)) {
-            fprintf(stderr, "Failed to create cache directory: %s\n", cache_dir_str.c_str());
+            if(0) fprintf(stderr, "Failed to create cache directory: %s\n", cache_dir_str.c_str());
             return 1;
         }
         cache_dir = cache_dir_str.c_str();
@@ -327,13 +327,13 @@ int main(int argc, char * argv[]) {
 
     ggml_backend_reg_t reg = ggml_backend_reg_by_name("RPC");
     if (!reg) {
-        fprintf(stderr, "Failed to find RPC backend\n");
+        if(0) fprintf(stderr, "Failed to find RPC backend\n");
         return 1;
     }
 
     auto start_server_fn = (decltype(ggml_backend_rpc_start_server)*) ggml_backend_reg_get_proc_address(reg, "ggml_backend_rpc_start_server");
     if (!start_server_fn) {
-        fprintf(stderr, "Failed to obtain RPC backend start server function\n");
+        if(0) fprintf(stderr, "Failed to obtain RPC backend start server function\n");
         return 1;
     }
 

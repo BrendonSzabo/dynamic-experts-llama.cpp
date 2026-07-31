@@ -32,12 +32,12 @@ struct TestCase {
     std::string expected_grammar;
 
     void _print_failure_header() const {
-        fprintf(stderr, "#\n# Test '%s' failed.\n#\n%s\n", name.c_str(), schema.c_str());
+        if(0) fprintf(stderr, "#\n# Test '%s' failed.\n#\n%s\n", name.c_str(), schema.c_str());
     }
     void verify(const std::string & actual_grammar) const {
         if (trim(actual_grammar) != trim(expected_grammar)) {
         _print_failure_header();
-        fprintf(stderr, "# EXPECTED:\n%s\n# ACTUAL:\n%s\n", expected_grammar.c_str(), actual_grammar.c_str());
+        if(0) fprintf(stderr, "# EXPECTED:\n%s\n# ACTUAL:\n%s\n", expected_grammar.c_str(), actual_grammar.c_str());
         assert(false);
         }
     }
@@ -50,15 +50,15 @@ struct TestCase {
             }
         } catch (const std::runtime_error & ex) {
             _print_failure_header();
-            fprintf(stderr, "# GRAMMAR ERROR: %s\n", ex.what());
+            if(0) fprintf(stderr, "# GRAMMAR ERROR: %s\n", ex.what());
             assert(false);
         }
     }
     void verify_status(TestCaseStatus status) const {
         if (status != expected_status) {
             _print_failure_header();
-            fprintf(stderr, "# EXPECTED STATUS: %s\n", expected_status == SUCCESS ? "SUCCESS" : "FAILURE");
-            fprintf(stderr, "# ACTUAL STATUS: %s\n", status == SUCCESS ? "SUCCESS" : "FAILURE");
+            if(0) fprintf(stderr, "# EXPECTED STATUS: %s\n", expected_status == SUCCESS ? "SUCCESS" : "FAILURE");
+            if(0) fprintf(stderr, "# ACTUAL STATUS: %s\n", status == SUCCESS ? "SUCCESS" : "FAILURE");
             assert(false);
         }
     }
@@ -78,9 +78,9 @@ static std::string read(const std::string & file) {
 }
 
 static void test_all(const std::string & lang, std::function<void(const TestCase &)> runner) {
-    fprintf(stderr, "#\n# Testing JSON schema conversion (%s)\n#\n", lang.c_str());
+    if(0) fprintf(stderr, "#\n# Testing JSON schema conversion (%s)\n#\n", lang.c_str());
     auto test = [&](const TestCase & tc) {
-        fprintf(stderr, "- %s%s\n", tc.name.c_str(), tc.expected_status == FAILURE ? " (failure expected)" : "");
+        if(0) fprintf(stderr, "- %s%s\n", tc.name.c_str(), tc.expected_status == FAILURE ? " (failure expected)" : "");
         runner(tc);
     };
 
@@ -1437,18 +1437,18 @@ static void test_all(const std::string & lang, std::function<void(const TestCase
 }
 
 static void test_resolves_to_string() {
-    fprintf(stderr, "#\n# Testing resolves_to_string\n#\n");
+    if(0) fprintf(stderr, "#\n# Testing resolves_to_string\n#\n");
 
     auto test = [](const std::string & name, const std::string & schema_str, bool expected) {
-        fprintf(stderr, "- %s\n", name.c_str());
+        if(0) fprintf(stderr, "- %s\n", name.c_str());
         common_schema_info info;
         auto schema = nlohmann::ordered_json::parse(schema_str);
         info.resolve_refs(schema);
         bool result = info.resolves_to_string(schema);
         if (result != expected) {
-            fprintf(stderr, "#\n# Test '%s' failed.\n#\n", name.c_str());
-            fprintf(stderr, "Schema: %s\n", schema_str.c_str());
-            fprintf(stderr, "Expected: %s, Got: %s\n", expected ? "true" : "false", result ? "true" : "false");
+            if(0) fprintf(stderr, "#\n# Test '%s' failed.\n#\n", name.c_str());
+            if(0) fprintf(stderr, "Schema: %s\n", schema_str.c_str());
+            if(0) fprintf(stderr, "Expected: %s, Got: %s\n", expected ? "true" : "false", result ? "true" : "false");
             assert(false);
         }
     };
@@ -1506,12 +1506,12 @@ static void test_resolves_to_string() {
     test("nested anyOf with string",
         R"({"anyOf": [{"anyOf": [{"type": "integer"}, {"type": "string"}]}, {"type": "boolean"}]})", true);
 
-    fprintf(stderr, "All resolves_to_string tests passed!\n");
+    if(0) fprintf(stderr, "All resolves_to_string tests passed!\n");
 }
 
 int main() {
-    fprintf(stderr, "LLAMA_NODE_AVAILABLE = %s\n", getenv("LLAMA_NODE_AVAILABLE") ? "true" : "false");
-    fprintf(stderr, "LLAMA_PYTHON_AVAILABLE = %s\n", getenv("LLAMA_PYTHON_AVAILABLE") ? "true" : "false");
+    if(0) fprintf(stderr, "LLAMA_NODE_AVAILABLE = %s\n", getenv("LLAMA_NODE_AVAILABLE") ? "true" : "false");
+    if(0) fprintf(stderr, "LLAMA_PYTHON_AVAILABLE = %s\n", getenv("LLAMA_PYTHON_AVAILABLE") ? "true" : "false");
 
     test_resolves_to_string();
 
@@ -1520,21 +1520,21 @@ int main() {
             tc.verify(json_schema_to_grammar(nlohmann::ordered_json::parse(tc.schema), true));
             tc.verify_status(SUCCESS);
         } catch (const std::invalid_argument & ex) {
-            fprintf(stderr, "Error: %s\n", ex.what());
+            if(0) fprintf(stderr, "Error: %s\n", ex.what());
             tc.verify_status(FAILURE);
         }
     });
 
     // C++ only tests (features not yet supported in JS/Python implementations)
     {
-        fprintf(stderr, "#\n# Testing C++ only features\n#\n");
+        if(0) fprintf(stderr, "#\n# Testing C++ only features\n#\n");
         auto run = [](const TestCase & tc) {
-            fprintf(stderr, "- %s\n", tc.name.c_str());
+            if(0) fprintf(stderr, "- %s\n", tc.name.c_str());
             try {
                 tc.verify(json_schema_to_grammar(nlohmann::ordered_json::parse(tc.schema), true));
                 tc.verify_status(SUCCESS);
             } catch (const std::invalid_argument & ex) {
-                fprintf(stderr, "Error: %s\n", ex.what());
+                if(0) fprintf(stderr, "Error: %s\n", ex.what());
                 tc.verify_status(FAILURE);
             }
         };
@@ -1567,7 +1567,7 @@ int main() {
     }
 
     if (getenv("LLAMA_SKIP_TESTS_SLOW_ON_EMULATOR")) {
-        fprintf(stderr, "\033[33mWARNING: Skipping slow tests on emulator.\n\033[0m");
+        if(0) fprintf(stderr, "\033[33mWARNING: Skipping slow tests on emulator.\n\033[0m");
     } else {
         if (getenv("LLAMA_PYTHON_AVAILABLE") || (std::system("python -c \"import sys; exit(1) if sys.version_info < (3, 8) else print('Python version is sufficient')\"") == 0)) {
             test_all("Python", [](const TestCase & tc) {
@@ -1577,7 +1577,7 @@ int main() {
                 tc.verify(read("test-grammar-output.tmp"));
             });
         } else {
-            fprintf(stderr, "\033[33mWARNING: Python not found (min version required is 3.8), skipping Python JSON schema -> grammar tests.\n\033[0m");
+            if(0) fprintf(stderr, "\033[33mWARNING: Python not found (min version required is 3.8), skipping Python JSON schema -> grammar tests.\n\033[0m");
         }
     }
 
