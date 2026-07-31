@@ -196,6 +196,16 @@ void ggml_cuda_mul_mat_q(
 
         ggml_cuda_launch_mm_ids_helper((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
             ne02, ne12, n_expert_used, ne11, si1, sis1, /*write_inverse =*/ dedup_bcast, stream);
+        {
+            std::vector<int32_t> tmp(8);
+            cudaMemcpy(tmp.data(), ids->data, 32, cudaMemcpyDeviceToHost);
+            fprintf(stderr, "dyn-ex mmq helper input ids=[%d,%d,%d,%d,%d,%d,%d,%d] dedup=%d\n",
+                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7], dedup_bcast);
+            cudaMemcpy(tmp.data(), ids_src1.get(), 32, cudaMemcpyDeviceToHost);
+            fprintf(stderr, "dyn-ex mmq helper src1_out=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
+                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7]);
+            fflush(stderr);
+        }
         CUDA_CHECK(cudaGetLastError());
     }
 
@@ -227,6 +237,13 @@ void ggml_cuda_mul_mat_q(
                                         ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
             }
         } else if (dedup_bcast) {
+            // read original ids from GPU to see what the remap produced
+            {
+                std::vector<int32_t> id_vals(std::min(ne_get_rows, (int64_t)8));
+                if (ids->data) cudaMemcpy(id_vals.data(), ids->data, id_vals.size()*4, cudaMemcpyDeviceToHost);
+                fprintf(stderr, "dyn-ex mmq scatter: ids->data=%p vals=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
+                    (void*)ids->data, id_vals[0],id_vals[1],id_vals[2],id_vals[3],id_vals[4],id_vals[5],id_vals[6],id_vals[7]);
+            }
             fprintf(stderr, "dyn-ex mmq scatter: ids_src1=%p ne_get_rows=%lld\n",
                 (void*)ids_src1.get(), (long long)ne_get_rows);
             // check first few ids values

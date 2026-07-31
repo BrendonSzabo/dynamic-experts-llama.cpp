@@ -615,6 +615,9 @@ void quantize_scatter_mmq_q8_1_cuda(
 
     const int64_t block_num_y = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
     const dim3 num_blocks(n_tokens, block_num_y, 1);
+    fprintf(stderr, "dyn-ex scatter quant: n_tokens=%lld block_y=%lld ne0=%lld n_expert_used=%d nrows=%lld\n",
+        (long long)n_tokens, (long long)block_num_y, (long long)ne0, n_expert_used, (long long)nrows_dst);
+    fflush(stderr);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE_MMQ, 1, 1);
     switch (mmq_get_q8_1_ds_layout(type_src0)) {
         case MMQ_Q8_1_DS_LAYOUT_D4:

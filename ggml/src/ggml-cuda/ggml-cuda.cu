@@ -5099,8 +5099,6 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         }
         case GGML_OP_CONT:
             return true;
-        case GGML_OP_DYN_EX_BARRIER:
-            return true;
         case GGML_OP_DIAG_MASK_INF:
             return true;
         case GGML_OP_SOFT_MAX:

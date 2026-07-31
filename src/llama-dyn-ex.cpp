@@ -228,17 +228,23 @@ static size_t align_up(size_t n, size_t align) {
 
 // helper: write data to a raw backend buffer at offset via a dummy tensor
 static void raw_buf_write(ggml_backend_buffer_t buf, size_t offset, const void * data, size_t size) {
+#ifdef GGML_USE_CUDA
+    static cudaStream_t s = nullptr;
+    if (!s) cudaStreamCreateWithFlags(&s, cudaStreamNonBlocking);
+    void * dst = (char *)ggml_backend_buffer_get_base(buf) + offset;
+    cudaMemcpyAsync(dst, data, size, cudaMemcpyHostToDevice, s);
+    cudaStreamSynchronize(s);
+#else
     ggml_tensor dummy;
     memset(&dummy, 0, sizeof(dummy));
     dummy.buffer = buf;
     dummy.data   = (char *)ggml_backend_buffer_get_base(buf) + offset;
     dummy.type   = GGML_TYPE_I8;
     dummy.ne[0]  = (int64_t)size;
-    dummy.ne[1]  = 1;
-    dummy.ne[2]  = 1;
-    dummy.ne[3]  = 1;
+    dummy.ne[1]  = 1; dummy.ne[2] = 1; dummy.ne[3] = 1;
     dummy.nb[0]  = 1;
     ggml_backend_tensor_set(&dummy, data, 0, size);
+#endif
 }
 
 dyn_ex_cache * dyn_ex_cache_init(
