@@ -319,7 +319,46 @@ Prefer conditional compilation (`#ifdef LLAMA_DYN_EX`) or runtime feature flags 
 
 ---
 
-## Next Step: Deep Dive into load_all_data Skip
+## Current Status (2026-07-31)
+
+### Working
+- **Model loading**: TENSOR_SKIP prevents expert weight GPU allocation
+- **.bin reader**: VLLM\x02 format, O(1) per-expert reads
+- **Slot cache**: GPU buffers per weight type, correct Q4_K strides
+- **Barrier mechanism**: cudaHostAllocMapped + CPU thread + GPU kernel, verified working (L0 go set)
+- **Slot_map**: raw_buf_write updates GPU (cudaMemcpyAsync on non-blocking stream)
+- **Remap**: ggml_get_rows(slot_map, flat) → reshape → cont, produces correct slot indices [0..15]
+- **Barrier thread**: polls ready via host_ptr, loads experts via ensure(), sets go
+- **Ensure()**: loads expert weights from .bin, smart eviction (skips needed experts)
+- **can_seq_rm skip**: llama_model_has_dyn_ex() API, skips 2-token test during server init
+
+### Failing
+- **Gate matmul crashes**: ggml_cuda_mul_mat_id for gate_exps has illegal memory access
+  - Matmul launches ok (cudaErr: ok) but kernel crashes async
+  - `ids_dst=0x1` in scatter path — corrupt pool pointer
+  - With `dedup_bcast=false`: non-MoE quantize with ne11_flat=96 for down matmul (wrong)
+  - SWIGLU `(i/n)*o0` formula bug (fixed with `j0=i` in unary_gated_op_kernel)
+
+### What's been tried
+1. **Eval callback**: fires per compute GROUP not per node — barrier gets bundled
+2. **Two-pass inference**: pass 1 captures expert IDs, pass 2 uses them → layer dependency makes it wrong for token 1
+3. **Scheduler save/restore**: confirmed slot tensors don't change buffers
+4. **EXTERNAL flag on all tensors**: prevents scheduler copies but crashes CUDA assert (buft mismatch)
+5. **supports_buft fix**: accept any buft for same device → slot_map recognized as CUDA
+6. **supports_op for DYN_EX_BARRIER**: barrier assigned to CUDA → GPU spin deadlocks cudaMemcpy
+7. **raw_buf_write cudaMemcpyAsync on non-blocking stream**: fixed deadlock, CPU writes while GPU spins
+8. **dedup_bcast=false**: avoids scatter path but down matmul quantize gets wrong ne11_flat
+9. **all-experts fill**: VRAM unchanged (8 slots) but startup too slow (10K .bin reads)
+
+### Architecture decisions
+- **Barrier on CPU**: main thread blocks, CUDA stream free for cudaMemcpy
+- **EXTERNAL flag**: scheduler doesn't copy slot tensors/slot_map/barriers
+- **cudaHostAllocMapped barriers**: shared CPU/GPU memory, no buffer mismatch
+- **Initial fill**: n_slots experts only (fast startup, barrier handles remainder)
+
+### Next
+- Fix gate matmul crash: `ids_dst` corruption or scatter-inverse map issue
+- Or: use `dedup_bcast=false` AND fix the non-MoE down matmul ne11_flat
 
 Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NOT accidentally skip:
 - `token_embd.weight` (embeddings)
@@ -338,7 +377,7 @@ Verify that `strstr(name, "_exps.")` ONLY matches MoE expert tensors and does NO
 ## Lessons Learned
 
 ### Always use logging
-When debugging, add fprintf(stderr, ...) at every step. Never guess the flow. This session wasted hours on:
+When debugging, add if(0) fprintf(stderr, ...) at every step. Never guess the flow. This session wasted hours on:
 - Believing scheduler reallocated buffers (it doesn't)
 - Believing callback fired for barrier nodes (it doesn't reach splits)
 - Believing two-pass could work (It doesn't because it wastes too much compute and is inherently a flawed idea)
