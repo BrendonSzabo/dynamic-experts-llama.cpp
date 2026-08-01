@@ -3054,9 +3054,6 @@ static int ggml_cpu_try_fuse_ops(
     }
 
     struct ggml_tensor * node = cgraph->nodes[node_n];
-                                                                                                                                                                 
-        fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]\n",                                                                                                                                                     
-            ggml_op_name(node->op), (long long)node->ne[0], (long long)node->ne[1], (long long)node->ne[2]);
 
     if (node->op == GGML_OP_RMS_NORM) {
         // RMS_NORM + MUL fusion
@@ -3110,14 +3107,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
-        fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]
-", ggml_op_name(node->op), (long long)node->ne[0], (long long)node->ne[1], (long long)node->ne[2]);
-                                                                                                                                                                 
-        fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]\n",                                                                                                                                                     
-            ggml_op_name(node->op), (long long)node->ne[0], (long long)node->ne[1], (long long)node->ne[2]);
-
-        fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]\n",
-            ggml_op_name(node->op), (long long)node->ne[0], (long long)node->ne[1], (long long)node->ne[2]);
+        fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]\n", ggml_op_name(node->op), (long long)node->ne[0], (long long)node->ne[1], (long long)node->ne[2]);
 
         if (ggml_op_is_empty(node->op)) {
             // skip NOPs
