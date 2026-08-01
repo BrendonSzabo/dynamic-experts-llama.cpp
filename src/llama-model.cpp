@@ -1630,7 +1630,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             ggml_tensor * orig_up      = layer.ffn_up_exps;
             ggml_tensor * orig_down    = layer.ffn_down_exps;
 
-            fprintf(stderr, "DYN-EX L%d ORIG: gate_up=%p(%lldx%lldx%lld) gate=%p(%lldx%lldx%lld) up=%p(%lldx%lldx%lld) down=%p(%lldx%lldx%lld)\n",
+            if(0) fprintf(stderr, "DYN-EX L%d ORIG: gate_up=%p(%lldx%lldx%lld) gate=%p(%lldx%lldx%lld) up=%p(%lldx%lldx%lld) down=%p(%lldx%lldx%lld)\n",
                 il,
                 (void*)orig_gate_up, orig_gate_up?(long long)orig_gate_up->ne[0]:0, orig_gate_up?(long long)orig_gate_up->ne[1]:0, orig_gate_up?(long long)orig_gate_up->ne[2]:0,
                 (void*)orig_gate,    orig_gate   ?(long long)orig_gate->ne[0]:0,    orig_gate   ?(long long)orig_gate->ne[1]:0,    orig_gate   ?(long long)orig_gate->ne[2]:0,
@@ -1689,7 +1689,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
                             (long long)slot->ne[0], (long long)slot->ne[1], (long long)slot->ne[2],
                             slot->nb[0], slot->nb[1], slot->nb[2], (int)slot->type);
                         if (orig) {
-                            fprintf(stderr, "DYN-EX L%d %s ORIG: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+                            if(0)fprintf(stderr, "DYN-EX L%d %s ORIG: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
                                 il, name,
                                 (long long)orig->ne[0], (long long)orig->ne[1], (long long)orig->ne[2],
                                 orig->nb[0], orig->nb[1], orig->nb[2], (int)orig->type);

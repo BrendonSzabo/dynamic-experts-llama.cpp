@@ -1958,13 +1958,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     std::vector<int32_t> tokens_per_expert(ne02);
     if(0) fprintf(stderr, "  tokens_per_expert size=%lld\n", (long long)ne02);
 
-    fprintf(stderr, "  sorted path: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ne_get_rows=%lld\n",
-            (long long)ne00, (long long)ne01, (long long)ne02,
-            (long long)ne10, (long long)ne11, (long long)ne12,
-            (long long)ne_get_rows);
-    fprintf(stderr, "  sorted alloc: src1=%lld dst=%lld\n",
-            (long long)(ne12*n_expert_used*ne10*ts_src1_sorted),
-            (long long)(ne2 *n_expert_used* ne0*ts_dst_sorted));
+    fprintf(stderr, "dyn-ex sorted: ne00=%lld ne02=%lld ne_get_rows=%lld\n",
+            (long long)ne00, (long long)ne02, (long long)ne_get_rows);
     ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_src1_sorted);
     ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
 
@@ -2022,15 +2017,13 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     char * src1_data_cur = (char *) src1_sorted.ptr;
     char *  dst_data_cur = (char *)  dst_sorted.ptr;
-    int n_nonzero = 0;
-    for (int64_t i = 0; i < ne02; i++) if (tokens_per_expert[i]) n_nonzero++;
-    fprintf(stderr, "  processing %d/%lld experts with tokens\n", n_nonzero, (long long)ne02);
+    if(0) { int n_nonzero = 0; for (int64_t i = 0; i < ne02; i++) if (tokens_per_expert[i]) n_nonzero++; fprintf(stderr, "  processing %d/%lld experts with tokens\n", n_nonzero, (long long)ne02); }
     for (int64_t i02 = 0; i02 < ne02; ++i02) {
-        fprintf(stderr, "  sorted expert %lld/%lld: tokens=%d ne10=%lld ne01=%lld nb02=%zu\n",
+        if(0) fprintf(stderr, "  sorted expert %lld/%lld: tokens=%d ne10=%lld ne01=%lld nb02=%zu\n",
                 (long long)i02, (long long)ne02, tokens_per_expert[i02],
                 (long long)ne10, (long long)ne01, (size_t)nb02);
         if (tokens_per_expert[i02] == 0) {
-            fprintf(stderr, "    skipping (no tokens)\n");
+            if(0) fprintf(stderr, "    skipping (no tokens)\n");
             continue;
         }
 
@@ -2083,13 +2076,12 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
                 (long long)src0_slice.ne[0], (long long)src0_slice.ne[1],
                 src0_slice.nb[0], src0_slice.nb[1], src0_slice.nb[2],
                 (int)src0_slice.type);
-
-        fprintf(stderr, "    calling ggml_cuda_mul_mat: src1 ne=[%lld,%lld] dst ne=[%lld,%lld]\n",
+        if(0) fprintf(stderr, "    calling ggml_cuda_mul_mat: src1 ne=[%lld,%lld] dst ne=[%lld,%lld]\n",
                 (long long)src1_slice.ne[0], (long long)src1_slice.ne[1],
                 (long long)dst_slice.ne[0], (long long)dst_slice.ne[1]);
         ggml_cuda_mul_mat(ctx, &src0_slice, &src1_slice, &dst_slice);
         CUDA_CHECK(cudaGetLastError());
-        fprintf(stderr, "    ggml_cuda_mul_mat done\n");
+        if(0) fprintf(stderr, "    ggml_cuda_mul_mat done\n");
 
         src1_data_cur += src1_slice.nb[2];
         dst_data_cur  +=  dst_slice.nb[2];

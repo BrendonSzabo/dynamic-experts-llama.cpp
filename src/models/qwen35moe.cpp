@@ -517,7 +517,7 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_ffn(ggml_tensor * cur, c
             model.layers[il].ffn_gate_exps_s,
             model.layers[il].ffn_down_exps_s,
             nullptr, model.layers[il].ffn_slot_map);
-    fprintf(stderr, "dyn-ex moe out L%d: cur ne=[%lld,%lld,%lld]\n", il, 
+    if(0) fprintf(stderr, "dyn-ex moe out L%d: cur ne=[%lld,%lld,%lld]\n", il, 
         (long long)cur->ne[0], (long long)cur->ne[1], (long long)cur->ne[2]);
     cb(moe_out, "ffn_moe_out", il);
 

@@ -1164,30 +1164,7 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
-    fprintf(stderr, "dyn-ex mmvq: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ids=%p src0_data=%p\n  nb10=%zu nb11=%zu nb12=%zu s11=%lld s12=%lld\n",
-        (long long)ne00, (long long)ne01, (long long)ne02,
-        (long long)ne10, (long long)ne11, (long long)ne12,
-        (void*)ids, src0->data,
-        nb10, nb11, nb12,
-        (long long)(nb11 / ts_src1), (long long)(nb12 / ts_src1));
 
-    {
-        float in[8];
-        cudaMemcpy(in, src1->data, 32, cudaMemcpyDeviceToHost);
-        fprintf(stderr, "dyn-ex mmvq input: %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
-            in[0],in[1],in[2],in[3],in[4],in[5],in[6],in[7]);
-    }
-
-    if (ids && src0->data) {
-        uint8_t slot0[64];
-        cudaMemcpy(slot0, src0->data, 64, cudaMemcpyDeviceToHost);
-        int32_t id_vals[8];
-        cudaMemcpy(id_vals, ids->data, 32, cudaMemcpyDeviceToHost);
-        fprintf(stderr, "dyn-ex mmvq verify: src0_data=%p ids_data=%p slot0=%02x%02x... nb2=%zu ids=[%d,%d,%d,%d,%d,%d,%d,%d] ne=%lld,%lld\n",
-            src0->data, ids->data, slot0[0],slot0[1], src0->nb[2],
-            id_vals[0],id_vals[1],id_vals[2],id_vals[3],id_vals[4],id_vals[5],id_vals[6],id_vals[7],
-            (long long)ids->ne[0], (long long)ids->ne[1]);
-    }
 
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
@@ -1281,12 +1258,14 @@ void ggml_cuda_mul_mat_vec_q(
         ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
         ne03,              ne3,           s03, s13,              s3,               ids_stride, stream);
 
-    if (ids) {
+    if (ids && src0->ne[2] == 16) {
         cudaStreamSynchronize(stream);
-        float out[8];
+        float out[8]; float in[8];
         cudaMemcpy(out, dst_d, 32, cudaMemcpyDeviceToHost);
-        fprintf(stderr, "dyn-ex mmvq out: dst[0..7]=%.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
-            out[0],out[1],out[2],out[3],out[4],out[5],out[6],out[7]);
+        cudaMemcpy(in, src1->data, 32, cudaMemcpyDeviceToHost);
+        int isnan = 0; for (int i=0;i<8;i++) if (out[i] != out[i]) isnan++;
+        fprintf(stderr, "dyn-ex gate: in=%.2f,%.2f out=%.2f,%.2f nan=%d\n",
+            in[0],in[1], out[0],out[1], isnan);
     }
 }
 
