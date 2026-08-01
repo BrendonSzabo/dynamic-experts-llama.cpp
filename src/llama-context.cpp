@@ -1349,15 +1349,15 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
 
-    if (il == 0 && n_e > 0) {
+    if ((il == 0 || il == 3) && n_e > 0) {
         int32_t sm[8];
         ggml_tensor * smt = model->layers[il].ffn_slot_map;
         if (smt && smt->data) {
             for (int i = 0; i < 8; i++) {
                 ggml_backend_tensor_get(smt, &sm[i], ids[i] * 4, 4);
             }
-            fprintf(stderr, "dyn-ex cb L0: slot_map[%d..]=%d,%d,%d,%d,%d,%d,%d,%d\n",
-                ids[0], sm[0],sm[1],sm[2],sm[3],sm[4],sm[5],sm[6],sm[7]);
+            fprintf(stderr, "dyn-ex cb L%d: slot_map[%d..]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+                il, ids[0], sm[0],sm[1],sm[2],sm[3],sm[4],sm[5],sm[6],sm[7]);
         }
     }
 

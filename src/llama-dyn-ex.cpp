@@ -604,6 +604,9 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
 void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
+    fprintf(stderr, "dyn-ex ensure_ordered L%d: n_ids=%d", layer, n_ids);
+    if (n_ids > 0) { fprintf(stderr, " ids=["); for(int i=0;i<n_ids&&i<8;i++) fprintf(stderr,"%d ",expert_ids[i]); fprintf(stderr,"]"); }
+    fprintf(stderr,"\n"); fflush(stderr);
     if (!expert_ids || n_ids <= 0) return;
     if (n_ids > cache->n_slots) n_ids = cache->n_slots;
 
@@ -625,11 +628,13 @@ void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * ex
         if (eid < 0 || eid >= n_experts) continue;
 
         int existing = cache->h_slot_of[layer_off_expert + eid];
+        if (i == 2) fprintf(stderr, "dyn-ex ordered L%d i=2: eid=%d existing=%d h_expert_in[slot2]=%d\n",
+            layer, eid, existing, cache->h_expert_in[layer_off_slot + slot]);
         if (existing == slot) continue;
-
         if (existing >= 0) {
-            cache->h_slot_of[layer_off_expert + existing] = DYN_EX_SENTINEL;
+            cache->h_expert_in[layer_off_slot + existing] = DYN_EX_SENTINEL;
         }
+
         int old_eid = cache->h_expert_in[layer_off_slot + slot];
         if (old_eid != DYN_EX_SENTINEL && old_eid != eid) {
             cache->h_slot_of[layer_off_expert + old_eid] = DYN_EX_SENTINEL;
@@ -663,6 +668,8 @@ void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * ex
     if (slot_map_changed && cache->buf_slot_map) {
         size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
         size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
+        fprintf(stderr, "dyn-ex ensure_ordered L%d sync: h_slot_of[%d]=%d (off=%zu sz=%zu)\n",
+            layer, expert_ids[2], cache->h_slot_of[layer_off_expert + expert_ids[2]], layer_byte_off, layer_byte_sz);
         raw_buf_write(cache->buf_slot_map.get(), layer_byte_off,
                       cache->h_slot_of.data() + layer_off_expert, layer_byte_sz);
     }
