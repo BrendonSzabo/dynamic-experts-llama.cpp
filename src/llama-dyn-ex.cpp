@@ -19,7 +19,7 @@
 static ggml_type dyn_ex_code_to_ggml_type(uint8_t code) {
     switch (code) {
         case 0:  return GGML_TYPE_F16;
-        case 1:  return GGML_TYPE_BF16;
+        case 1:  return GGML_TYPE_F16;
         case 2:  return GGML_TYPE_F32;
         case 20: return GGML_TYPE_Q4_0;
         case 21: return GGML_TYPE_Q4_1;
