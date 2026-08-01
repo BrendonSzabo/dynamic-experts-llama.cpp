@@ -1164,6 +1164,7 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
+    if (ids && src0->ne[2] == 16) fprintf(stderr, "dyn-ex vec_q ENTER ne02=16 gate\n");
 
 
     const float   * src1_d =       (const float   *) src1->data;
