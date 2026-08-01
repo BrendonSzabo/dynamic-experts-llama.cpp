@@ -1349,6 +1349,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
 
+    fprintf(stderr, "dyn-ex L%d: ids[0..7]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+        il, ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7]);
+
     if ((il == 0 || il == 3) && n_e > 0) {
         int32_t sm[8];
         ggml_tensor * smt = model->layers[il].ffn_slot_map;
