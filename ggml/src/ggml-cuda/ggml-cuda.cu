@@ -1878,7 +1878,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         if(0) fprintf(stderr, "  src1 and dst both F32, checking special paths...\n");
         static_assert(MMVQ_MAX_BATCH_SIZE == MMVF_MAX_BATCH_SIZE, "MMVQ and MMVF batch sizes must match");
-        if (ne2 <= MMVQ_MAX_BATCH_SIZE) {
+        if (ne2 <= MMVQ_MAX_BATCH_SIZE && ne11 <= 1) {
             if(0) fprintf(stderr, "  ne2=%lld <= MMVQ_MAX_BATCH_SIZE=%d\n", (long long)ne2, MMVQ_MAX_BATCH_SIZE);
             if (ggml_is_quantized(src0->type)) {
                 if(0) fprintf(stderr, "  src0 is quantized\n");
