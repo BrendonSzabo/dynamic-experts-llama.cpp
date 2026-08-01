@@ -1711,6 +1711,9 @@ static void ggml_compute_forward_mul_mat_id(
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
+    fprintf(stderr, "CPU %s ne=[%lld,%lld,%lld]\n",
+        ggml_op_name(tensor->op), (long long)tensor->ne[0], (long long)tensor->ne[1], (long long)tensor->ne[2]);
+
     if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
         return;
     }

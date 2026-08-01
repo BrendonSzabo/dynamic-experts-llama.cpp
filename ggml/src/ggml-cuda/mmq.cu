@@ -213,7 +213,12 @@ void ggml_cuda_mul_mat_q(
         {
             std::vector<int32_t> tmp(8);
             cudaMemcpy(tmp.data(), ids->data, 32, cudaMemcpyDeviceToHost);
+            fprintf(stderr, "dyn-ex mmq helper input ids=[%d,%d,%d,%d,%d,%d,%d,%d] dedup=%d\n",
+                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7], dedup_bcast);
             cudaMemcpy(tmp.data(), ids_src1.get(), 32, cudaMemcpyDeviceToHost);
+            fprintf(stderr, "dyn-ex mmq helper src1_out=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
+                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7]);
+            fflush(stderr);
         }
         CUDA_CHECK(cudaGetLastError());
     }

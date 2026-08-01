@@ -1423,13 +1423,20 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
 
     if (!ggml_cuda_mmq_get_stream_k(type, J, fallback, cc)) {
+        if(0) fprintf(stderr, "  non-stream-k path, launching tiling kernel...\n");
+        fprintf(stderr, "dyn-ex mmq launch: type=%d fb=%d J=%d nrows=%d ncols=%d nchan=%d grid=(%d,%d,%d) block=(%d,%d,%d) ids_dst=%p x=%p\n",
+            (int)type, (int)fallback, (int)J, args.nrows_x, args.ncols_dst, nchannels_y_fd,
+            block_nums_xy_tiling.x,block_nums_xy_tiling.y,block_nums_xy_tiling.z,
+            block_dims.x,block_dims.y,block_dims.z, (void*)args.ids_dst, (void*)args.x);
+        fflush(stderr);
         mul_mat_q<type, J, fallback><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr, args.y_scale,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
              ntx_fd);
-        { cudaError_t e = cudaGetLastError(); 
+        { cudaError_t e = cudaGetLastError(); fprintf(stderr, "dyn-ex mmq tiling cudaErr: %s\n", e == cudaSuccess ? "ok" : cudaGetErrorString(e)); }
+        fprintf(stderr, "[launch_mul_mat_q] exit (tiling)\n");
         return;
     }
 
@@ -1482,7 +1489,6 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
          args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
          ntx_fd);
     if(0) fprintf(stderr, "[launch_mul_mat_q] exit (stream-k with fixup)\n");
-}
 }
 
 template<ggml_type type, bool fallback>

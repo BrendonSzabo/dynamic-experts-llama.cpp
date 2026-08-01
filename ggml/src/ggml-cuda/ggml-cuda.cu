@@ -1853,7 +1853,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 }
 
 static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    if(0) fprintf(stderr, "dyn-ex mul_mat_id entry: ne02=%lld\n", (long long)dst->src[0]->ne[2]);
+    if(1) fprintf(stderr, "dyn-ex mul_mat_id entry: ne02=%lld\n", (long long)dst->src[0]->ne[2]);
 
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
@@ -1963,11 +1963,23 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_src1_sorted);
     ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
 
+    if (!src1_sorted.get() || !dst_sorted.get()) {
+        fprintf(stderr, "DYN-EX sorted path: POOL ALLOC FAILED src1=%p dst=%p\n",
+                (void*)src1_sorted.get(), (void*)dst_sorted.get());
+        GGML_ABORT("pool alloc failed in sorted path");
+    }
+    if(0) fprintf(stderr, "  allocated src1_sorted (%lld) and dst_sorted (%lld)\n",
+            (long long)(ne12*n_expert_used*ne10*ts_src1_sorted),
+            (long long)(ne2 *n_expert_used* ne0*ts_dst_sorted));
+
     std::vector<char> ids_host(ggml_nbytes(ids));
+    if(0) fprintf(stderr, "  copying ids from device to host (async)...\n");
     CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids->data, ggml_nbytes(ids), cudaMemcpyDeviceToHost, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    if(0) fprintf(stderr, "  ids copy complete\n");
 
     // build mapping
+    if(0) fprintf(stderr, "  building expert mapping...\n");
     for (int64_t i02 = 0; i02 < ne02; ++i02) {
         for (int64_t i12 = 0; i12 < ne12; ++i12) {
             for (int64_t iex = 0; iex < n_expert_used; ++iex) {
@@ -1983,25 +1995,38 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         }
     }
     GGML_ASSERT(ids_to_sorted_host.size() == size_t(ne_get_rows));
+    if(0) fprintf(stderr, "  mapping built, ids_to_sorted_host.size()=%zu\n", ids_to_sorted_host.size());
 
     ids_to_sorted_host.insert(ids_to_sorted_host.end(), ids_from_sorted_host.begin(), ids_from_sorted_host.end());
 
+    if(0) fprintf(stderr, "  uploading mapping to device...\n");
     CUDA_CHECK(cudaMemcpyAsync(ids_buf_dev.ptr, ids_to_sorted_host.data(), 2*ne_get_rows*sizeof(int32_t), cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    if(0) fprintf(stderr, "  mapping upload complete\n");
 
     const int32_t * ids_to_sorted   = ids_buf_dev.ptr + 0*ne_get_rows;
     const int32_t * ids_from_sorted = ids_buf_dev.ptr + 1*ne_get_rows;
 
+    if(1) fprintf(stderr, "  launching get_rows for src1...\n");
     get_rows_cuda(src1->data, src1->type, ids_to_sorted, src1_sorted.ptr, type_src1_sorted,
         ne10, nb11, nb12, nb13,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
         ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, ne_get_rows*ne10*ts_src1_sorted, stream);
     CUDA_CHECK(cudaGetLastError());
+    if(1) fprintf(stderr, "  get_rows for src1 done\n");
 
     char * src1_data_cur = (char *) src1_sorted.ptr;
     char *  dst_data_cur = (char *)  dst_sorted.ptr;
     if(0) { int n_nonzero = 0; for (int64_t i = 0; i < ne02; i++) if (tokens_per_expert[i]) n_nonzero++; fprintf(stderr, "  processing %d/%lld experts with tokens\n", n_nonzero, (long long)ne02); }
     for (int64_t i02 = 0; i02 < ne02; ++i02) {
+        if(0) fprintf(stderr, "  sorted expert %lld/%lld: tokens=%d ne10=%lld ne01=%lld nb02=%zu\n",
+                (long long)i02, (long long)ne02, tokens_per_expert[i02],
+                (long long)ne10, (long long)ne01, (size_t)nb02);
+        if (tokens_per_expert[i02] == 0) {
+            if(0) fprintf(stderr, "    skipping (no tokens)\n");
+            continue;
+        }
+
         // src0 slice
         ggml_tensor src0_slice = *src0;
         src0_slice.ne[2]    = 1;
@@ -2009,6 +2034,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         src0_slice.op       = GGML_OP_VIEW;
         src0_slice.view_src = dst->src[0];
         src0_slice.data     = (char *) src0->data + i02*nb02;
+        if(0) fprintf(stderr, "    src0 slice: ne={%lld,%lld,1}, data offset=%lld\n",
+                (long long)src0_slice.ne[0], (long long)src0_slice.ne[1], (long long)(i02*nb02));
 
         // src1 slice
         ggml_tensor src1_slice;
@@ -2024,6 +2051,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         src1_slice.nb[2]  = src1_slice.ne[1] * src1_slice.nb[1];
         src1_slice.nb[3]  = src1_slice.ne[2] * src1_slice.nb[2];
         src1_slice.data   = src1_data_cur;
+        if(0) fprintf(stderr, "    src1 slice: ne={%lld,%lld,1}, data=%p\n",
+                (long long)src1_slice.ne[0], (long long)src1_slice.ne[1], (void*)src1_data_cur);
 
         // dst slice
         ggml_tensor dst_slice;
@@ -2039,13 +2068,26 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         dst_slice.nb[2]  = dst_slice.ne[1] * dst_slice.nb[1];
         dst_slice.nb[3]  = dst_slice.ne[2] * dst_slice.nb[2];
         dst_slice.data   = dst_data_cur;
+        if(0) fprintf(stderr, "    dst slice: ne={%lld,%lld,1}, data=%p\n",
+                (long long)dst_slice.ne[0], (long long)dst_slice.ne[1], (void*)dst_data_cur);
+
+        if(0) fprintf(stderr, "    src0 slice: data=%p ne=[%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+                (void*)src0_slice.data,
+                (long long)src0_slice.ne[0], (long long)src0_slice.ne[1],
+                src0_slice.nb[0], src0_slice.nb[1], src0_slice.nb[2],
+                (int)src0_slice.type);
+        if(0) fprintf(stderr, "    calling ggml_cuda_mul_mat: src1 ne=[%lld,%lld] dst ne=[%lld,%lld]\n",
+                (long long)src1_slice.ne[0], (long long)src1_slice.ne[1],
+                (long long)dst_slice.ne[0], (long long)dst_slice.ne[1]);
         ggml_cuda_mul_mat(ctx, &src0_slice, &src1_slice, &dst_slice);
         CUDA_CHECK(cudaGetLastError());
+        if(0) fprintf(stderr, "    ggml_cuda_mul_mat done\n");
 
         src1_data_cur += src1_slice.nb[2];
         dst_data_cur  +=  dst_slice.nb[2];
     }
 
+    if(0) fprintf(stderr, "  final get_rows to scatter back...\n");
     get_rows_cuda(dst_sorted.ptr, type_dst_sorted, ids_from_sorted, dst->data, dst->type,
         ne0, ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted, ne_get_rows*ne0*ts_dst_sorted,
         ne_get_rows, 1, 1, sizeof(int32_t), ne_get_rows*sizeof(int32_t), ne_get_rows*sizeof(int32_t),
@@ -5525,12 +5567,12 @@ __global__ void dyn_ex_barrier_kernel(
     __threadfence_system();
     __syncthreads();
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        if(0) printf("dyn-ex GPU barrier: n_e=%d n_tot=%d ready_ptr=%p go_ptr=%p buf=%p\n",
+        printf("dyn-ex GPU barrier: n_e=%d n_tot=%d ready_ptr=%p go_ptr=%p buf=%p\n",
             n_elements, n_total, (void*)&buf[n_total-2], (void*)&buf[n_total-1], (void*)buf);
         buf[n_total - 2] = 1;
         __threadfence_system();
         while (buf[n_total - 1] == 0) { __threadfence_system(); }
-        if(0) printf("dyn-ex GPU barrier: go!\n");
+        printf("dyn-ex GPU barrier: go!\n");
     }
     __syncthreads();
 }
