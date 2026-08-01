@@ -1164,6 +1164,11 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
+    if (ids && src0->ne[2] < 128) {
+        fprintf(stderr, "dyn-ex mmvq SKIP ne02=%lld, falling to MMQ\n", (long long)src0->ne[2]);
+        return;
+    }
+
     fprintf(stderr, "dyn-ex mmvq: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ids=%p src0_data=%p\n  nb10=%zu nb11=%zu nb12=%zu s11=%lld s12=%lld\n",
         (long long)ne00, (long long)ne01, (long long)ne02,
         (long long)ne10, (long long)ne11, (long long)ne12,

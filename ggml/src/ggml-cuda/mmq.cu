@@ -99,6 +99,11 @@ void ggml_cuda_mul_mat_q(
     GGML_ASSERT(        nb0        == ts_dst);
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
 
+    if (ids && src0->ne[2] < 128) {
+        fprintf(stderr, "dyn-ex mmq SKIP ne02=%lld, falling to sorted\n", (long long)src0->ne[2]);
+        return;
+    }
+
     const char  * src0_d = (const char  *) src0->data;
     const float * src1_d = (const float *) src1->data;
     float       *  dst_d = (float       *)  dst->data;
