@@ -1537,7 +1537,6 @@ bool llama_model_loader::load_all_data(
             if (strstr(tname, "_exps.") || strstr(tname, "_exps_")) {
                 size_t n_size       = ggml_nbytes(cur);
                 int    n_elems      = (int) ggml_nelements(cur);
-                fprintf(stderr, "DYN-EX SKIP: %s  n_bytes=%zu  n_elems=%d\n", tname, n_size, n_elems);
                 size_done += n_size;
                 n_skipped_dyn_ex++;
                 continue;
@@ -1658,11 +1657,6 @@ bool llama_model_loader::load_all_data(
         }
 
         size_done += n_size;
-    }
-
-    if (n_skipped_dyn_ex > 0) {
-        fprintf(stderr, "DYN-EX SKIP SUMMARY: %d expert tensors skipped (%.1f%% of total data)\n",
-                n_skipped_dyn_ex, 100.0f * (float)size_done / (float)size_data);
     }
 
     // free temporary resources used for async uploads

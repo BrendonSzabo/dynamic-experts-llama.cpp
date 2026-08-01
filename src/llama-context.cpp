@@ -272,9 +272,6 @@ llama_context::llama_context(
         int max_tok = model.dyn_ex_get_cache()->n_slots / (int)model.hparams.n_expert_used;
         if (max_tok < 1) max_tok = 1;
         if ((int)cparams.n_ubatch > max_tok) {
-            LLAMA_LOG_INFO("%s: dyn-ex: clamping n_ubatch %u -> %d (n_slots=%d / n_expert_used=%d)\n",
-                __func__, cparams.n_ubatch, max_tok,
-                model.dyn_ex_get_cache()->n_slots, (int)model.hparams.n_expert_used);
             cparams.n_ubatch = (uint32_t)max_tok;
         }
     }
@@ -1349,7 +1346,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
 
-    fprintf(stderr, "dyn-ex L%d: ids[0..7]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+    if(0) fprintf(stderr, "dyn-ex L%d: ids[0..7]=%d,%d,%d,%d,%d,%d,%d,%d\n",
         il, ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7]);
 
     if ((il == 0 || il == 3) && n_e > 0) {
@@ -1374,9 +1371,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 if (slot_idx >= 0) {
                     std::vector<uint8_t> gpu(32);
                     ggml_backend_tensor_get(gate_t, gpu.data(), (size_t)slot_idx * gate_t->nb[2], 32);
-                    fprintf(stderr, "dyn-ex L0 GPU e%03d slot%d: ", ids[i], slot_idx);
-                    for (int j=0;j<32;j++) fprintf(stderr,"%02x",gpu[j]);
-                    fprintf(stderr,"\n");
                 }
             }
         }

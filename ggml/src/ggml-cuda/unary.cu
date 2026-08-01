@@ -265,7 +265,7 @@ static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
                                              const int64_t o0, const int64_t o1) {
     // Log entry per thread (only first few threads to avoid flood - adjust if needed)
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("[unary_gated_op_kernel] entry: k=%lld, n=%lld, o0=%lld, o1=%lld\n",
+        if(0) printf("[unary_gated_op_kernel] entry: k=%lld, n=%lld, o0=%lld, o1=%lld\n",
                (long long)k, (long long)n, (long long)o0, (long long)o1);
     }
 
@@ -275,7 +275,7 @@ static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
     if (i >= k) {
         // Log early return
         if (i == k) { // only log once at the boundary thread, optional
-            printf("[unary_gated_op_kernel] thread %lld reached i>=k, returning (i==%lld, k==%lld)\n",
+            if(0) printf("[unary_gated_op_kernel] thread %lld reached i>=k, returning (i==%lld, k==%lld)\n",
                    (long long)i, (long long)i, (long long)k);
         }
         return;
@@ -283,7 +283,7 @@ static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
 
     // Log thread active (selective to avoid spam: first thread per block or a few)
     if (threadIdx.x == 0 && blockIdx.x < 4) {
-        printf("[unary_gated_op_kernel] block %d, thread %lld active, i=%lld\n",
+        if(0) printf("[unary_gated_op_kernel] block %d, thread %lld active, i=%lld\n",
                blockIdx.x, (long long)threadIdx.x, (long long)i);
     }
 
@@ -293,12 +293,12 @@ static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
 
     // Log indices and gate condition
     if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("[unary_gated_op_kernel] i=%lld: j0=%lld, j1=%lld, same offsets=%d\n",
+        if(0) printf("[unary_gated_op_kernel] i=%lld: j0=%lld, j1=%lld, same offsets=%d\n",
                (long long)i, (long long)j0, (long long)j1, (o0 == o1));
     }
     // print addresses at midpoint
     if (threadIdx.x == 0 && blockIdx.x == 192) {
-        printf("[unary_gated_op_kernel] block 192: x[%lld]=%p g[%lld]=%p x=%p g=%p\n",
+        if(0) printf("[unary_gated_op_kernel] block 192: x[%lld]=%p g[%lld]=%p x=%p g=%p\n",
                (long long)j0, (void*)&x[j0], (long long)j1, (void*)&g[j1], (void*)x, (void*)g);
     }
 
@@ -306,12 +306,6 @@ static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
     float x_val = (float)x[j0];
     float g_val = (float)g[j1];
     dst[i] = (T)(op(x_val) * g_val);
-
-    // Optional: log result for first element
-    if (i == 0) {
-        printf("[unary_gated_op_kernel] i=0: x=%f, g=%f, dst=%f\n",
-               (double)x_val, (double)g_val, (double)dst[i]);
-    }
 }
 
 template <float (*op)(float), typename T>
@@ -397,42 +391,16 @@ void ggml_cuda_op_unary_gated(ggml_backend_cuda_context & ctx, ggml_tensor * dst
         half * src0_p = (half *) src0_d;
         half * src1_p = (half *) src1_d;
 
-        if (!src1) {
-            if(0) fprintf(stderr, "    no src1: adjusting pointers (swapped=%d)\n", swapped);
-            src0_p += swapped ? nc : 0;
-            src1_p += swapped ? 0 : nc;
-        } else {
-            if(0) fprintf(stderr, "    src1 present, pointers unchanged\n");
-        }
-
-        fprintf(stderr, "dyn-ex swiglu launch<op> (half) nelements=%ld nc=%ld stride0=%ld stride1=%ld\n",
-                (long)ggml_nelements(dst), (long)nc,
-                (long)(src0_o / sizeof(half)), (long)(src1_o / sizeof(half)));
         unary_gated_cuda<op>(src0_p, src1_p, (half *)dst_d, ggml_nelements(dst), nc,
                              src0_o / sizeof(half), src1_o / sizeof(half), stream);
     } else {
-        if(0) fprintf(stderr, "  f32 path\n");
         float * src0_p = (float *) src0_d;
         float * src1_p = (float *) src1_d;
-        fprintf(stderr, "dyn-ex swiglu: src0_p=%p src1_p=%p dst=%p\n", (void*)src0_p, (void*)src1_p, (void*)dst_d);
-        fflush(stderr);
 
-        if (!src1) {
-            if(0) fprintf(stderr, "    no src1: adjusting pointers (swapped=%d)\n", swapped);
-            src0_p += swapped ? nc : 0;
-            src1_p += swapped ? 0 : nc;
-        } else {
-            if(0) fprintf(stderr, "    src1 present, pointers unchanged\n");
-        }
-
-        fprintf(stderr, "dyn-ex swiglu launch<op> (float) nelements=%ld nc=%ld stride0=%ld stride1=%ld\n",
-                (long)ggml_nelements(dst), (long)nc,
-                (long)(src0_o / sizeof(float)), (long)(src1_o / sizeof(float)));
         unary_gated_cuda<op>(src0_p, src1_p, (float *)dst_d, ggml_nelements(dst), nc,
                              src0_o / sizeof(float), src1_o / sizeof(float), stream);
     }
 
-    if(0) fprintf(stderr, "[ggml_cuda_op_unary_gated] exit\n");
 }
 
 void ggml_cuda_op_reglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {

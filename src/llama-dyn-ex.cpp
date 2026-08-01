@@ -165,17 +165,6 @@ dyn_ex_reader * dyn_ex_reader_open(const char * path) {
         data_off += (size_t)r->n_layers * (size_t)r->n_experts * stride;
     }
 
-    for (int i = 0; i < r->n_params; i++) {
-        fprintf(stderr, "DYN-EX PARAM %d: %s  data_off=%zu  stride=%zu  expert_bytes=%zu  type=%d/%d\n",
-            i, r->params[i].name, r->param_data_off[i], r->param_stride[i],
-            dyn_ex_param_size(r, i), (int)r->params[i].dtype_code, (int)r->params[i].type);
-    }
-    fprintf(stderr, "DYN-EX READER: n_layers=%d n_experts=%d mmap_size=%zu header_size=%d\n",
-        r->n_layers, r->n_experts, r->mmap_size, DYN_EX_HEADER_SIZE);
-
-    LLAMA_LOG_INFO("dyn-ex: opened %s: %d layers, %d experts, %d params\n",
-                   path, r->n_layers, r->n_experts, r->n_params);
-
     return r;
 }
 
@@ -193,20 +182,9 @@ size_t dyn_ex_read_param(const dyn_ex_reader * r, int param_idx, int layer, int 
     if (expert_id < 0 || expert_id >= r->n_experts) return 0;
 
     size_t expert_size = dyn_ex_param_size(r, param_idx);
-    if (buf_size < expert_size) {
-        fprintf(stderr, "DYN-EX READ PARAM FAIL: buf_size=%zu < expert_size=%zu param=%s\n",
-            buf_size, expert_size, r->params[param_idx].name);
-        return 0;
-    }
 
     size_t file_off = r->param_data_off[param_idx]
                     + (size_t)(layer * r->n_experts + expert_id) * r->param_stride[param_idx];
-
-    if (file_off + expert_size > r->mmap_size) {
-        fprintf(stderr, "DYN-EX READ PARAM FAIL: file_off=%zu + expert_size=%zu > mmap_size=%zu param=%s\n",
-            file_off, expert_size, r->mmap_size, r->params[param_idx].name);
-        return 0;
-    }
 
     memcpy(buf, (const uint8_t *)r->mmap_addr + file_off, expert_size);
     return expert_size;
@@ -302,11 +280,6 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->pi_gate    = pi_gate;
     cache->pi_up      = pi_up;
     cache->pi_down    = pi_down;
-    fprintf(stderr, "dyn-ex param types: gate_up=%d gate=%d up=%d down=%d\n",
-        pi_gate_up >= 0 ? (int)reader->params[pi_gate_up].type : -1,
-        pi_gate >= 0 ? (int)reader->params[pi_gate].type : -1,
-        pi_up >= 0 ? (int)reader->params[pi_up].type : -1,
-        pi_down >= 0 ? (int)reader->params[pi_down].type : -1);
 
     // compute per-expert sizes
     if (pi_gate_up >= 0) {
@@ -432,9 +405,6 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
 
 void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
     if (!cache || layer < 0 || layer >= cache->n_layers) return;
-    fprintf(stderr, "dyn-ex ensure L%d: n_ids=%d", layer, n_ids);
-    if (n_ids > 0) { fprintf(stderr, " ids=["); for(int i=0;i<n_ids&&i<8;i++) fprintf(stderr,"%d ",expert_ids[i]); fprintf(stderr,"]"); }
-    fprintf(stderr,"\n"); fflush(stderr);
     if (!expert_ids || n_ids <= 0) return;
 
     // count unique experts
@@ -445,8 +415,6 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
         int s = cache->h_slot_of[layer * cache->n_experts + eid];
         if (s == DYN_EX_SENTINEL) n_unique++;
     }
-    if(0) fprintf(stderr, "dyn-ex ensure L%d: %d ids, %d unique\n", layer, n_ids, n_unique);
-
     const int n_experts = cache->n_experts;
     const int n_slots   = cache->n_slots;
     const int layer_off_expert = layer * n_experts;
@@ -464,20 +432,16 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
 
     for (int i = 0; i < n_ids; i++) {
         int eid = expert_ids[i];
-        if(0) fprintf(stderr, "dyn-ex ensure L%d load i=%d eid=%d\n", layer, i, eid); fflush(stderr);
         if (eid < 0 || eid >= n_experts) continue;
-        if(0) fprintf(stderr, "dyn-ex ensure: past eid boundery check\n");
 
         // already loaded?
         int existing_slot = cache->h_slot_of[layer_off_expert + eid];
         if (existing_slot != DYN_EX_SENTINEL) continue;
-        if(0) fprintf(stderr, "dyn-ex ensure: not already loaded\n"); fflush(stderr);
 
         // find a free slot (round-robin reuse)
         int slot = -1;
         for (int attempt = 0; attempt < n_slots; attempt++) {
             int s = (next_slot + attempt) % n_slots;
-            if(0) fprintf(stderr, "dyn-ex ensure: looking for free slot: %d\n", s); fflush(stderr);
             if (!cache->h_slot_used[layer_off_slot + s]) {
                 slot = s;
                 break;
@@ -625,7 +589,7 @@ void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * ex
         if (eid < 0 || eid >= n_experts) continue;
 
         int existing = cache->h_slot_of[layer_off_expert + eid];
-        if (i == 2) fprintf(stderr, "dyn-ex ordered L%d i=2: eid=%d existing=%d h_expert_in[slot2]=%d\n",
+        if (0) fprintf(stderr, "dyn-ex ordered L%d i=2: eid=%d existing=%d h_expert_in[slot2]=%d\n",
             layer, eid, existing, cache->h_expert_in[layer_off_slot + slot]);
         if (existing == slot) continue;
         if (existing >= 0) {

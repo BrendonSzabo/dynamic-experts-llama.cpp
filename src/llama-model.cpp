@@ -1555,15 +1555,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
     // dyn-ex: set up dynamic expert cache and replace layer expert tensors
-    fprintf(stderr, "DYN-EX CHECK: n_expert=%d n_slots=%d path=%s\n",
-            (int)hparams.n_expert, params.dyn_ex_n_slots,
-            params.dyn_ex_path ? params.dyn_ex_path : "(null)");
     if (hparams.n_expert > 0 && params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]) {
-        fprintf(stderr, "DYN-EX ENTERED: initializing from %s n_slots=%d\n",
-                params.dyn_ex_path, params.dyn_ex_n_slots);
-        LLAMA_LOG_INFO("%s: initializing dynamic experts from %s (n_slots=%d)\n",
-                       __func__, params.dyn_ex_path, params.dyn_ex_n_slots);
-
         dyn_ex_reader * reader = dyn_ex_reader_open(params.dyn_ex_path);
         if (!reader) {
             throw std::runtime_error(format("dyn-ex: failed to open %s", params.dyn_ex_path));
@@ -1571,20 +1563,15 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
 
         // find GPU device
         ggml_backend_dev_t gpu_dev = cpu_dev;
-        if(0) fprintf(stderr, "dyn-ex gpu_dev: buft_list_size=%zu empty=%d\n",
-            pimpl->gpu_buft_list.size(), pimpl->gpu_buft_list.empty());
         if (!pimpl->gpu_buft_list.empty()) {
             gpu_dev = pimpl->gpu_buft_list.begin()->first;
         }
-        if(0) fprintf(stderr, "dyn-ex gpu_dev: final=%p cpu_dev=%p\n", (void*)gpu_dev, (void*)cpu_dev);
 
         // grab original expert tensor metadata from first MoE layer
         pimpl->dyn_ex = dyn_ex_cache_init(
             reader, params.dyn_ex_n_slots, gpu_dev,
             ggml_backend_dev_buffer_type(gpu_dev),
             nullptr, nullptr, nullptr, nullptr);
-        if(0) fprintf(stderr, "dyn-ex init result: cache=%p\n", (void*)pimpl->dyn_ex);
-        fflush(stderr);
         if (!pimpl->dyn_ex) {
             dyn_ex_reader_close(reader);
             throw std::runtime_error("dyn-ex: cache init failed");
@@ -1630,13 +1617,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             ggml_tensor * orig_up      = layer.ffn_up_exps;
             ggml_tensor * orig_down    = layer.ffn_down_exps;
 
-            if(0) fprintf(stderr, "DYN-EX L%d ORIG: gate_up=%p(%lldx%lldx%lld) gate=%p(%lldx%lldx%lld) up=%p(%lldx%lldx%lld) down=%p(%lldx%lldx%lld)\n",
-                il,
-                (void*)orig_gate_up, orig_gate_up?(long long)orig_gate_up->ne[0]:0, orig_gate_up?(long long)orig_gate_up->ne[1]:0, orig_gate_up?(long long)orig_gate_up->ne[2]:0,
-                (void*)orig_gate,    orig_gate   ?(long long)orig_gate->ne[0]:0,    orig_gate   ?(long long)orig_gate->ne[1]:0,    orig_gate   ?(long long)orig_gate->ne[2]:0,
-                (void*)orig_up,      orig_up     ?(long long)orig_up->ne[0]:0,      orig_up     ?(long long)orig_up->ne[1]:0,      orig_up     ?(long long)orig_up->ne[2]:0,
-                (void*)orig_down,    orig_down   ?(long long)orig_down->ne[0]:0,    orig_down   ?(long long)orig_down->ne[1]:0,    orig_down   ?(long long)orig_down->ne[2]:0);
-
             layer.ffn_slot_map = new ggml_tensor();
             memset(layer.ffn_slot_map, 0, sizeof(ggml_tensor));
             layer.ffn_slot_map->type   = GGML_TYPE_I32;
@@ -1667,10 +1647,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (il == 0) {
                 auto dump = [](const char * tag, ggml_tensor * t) {
                     if (!t) return;
-                    fprintf(stderr, "DYN-EX %s: type=%d ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu,%zu] data=%p\n",
-                        tag, (int)t->type,
-                        (long long)t->ne[0], (long long)t->ne[1], (long long)t->ne[2],
-                        t->nb[0], t->nb[1], t->nb[2], t->nb[3], t->data);
                 };
                 dump("ORIG_gate", orig_gate);
                 dump("SLOT_gate", layer.ffn_gate_exps);
@@ -1688,38 +1664,15 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (il == 0 || il == n_layer_all - 1) {
                 int moe = (layer.ffn_gate_up_exps != nullptr) + (layer.ffn_gate_exps != nullptr) +
                           (layer.ffn_up_exps != nullptr) + (layer.ffn_down_exps != nullptr);
-                fprintf(stderr, "DYN-EX L%d MOE: %d slot tensors non-null\n", il, moe);
             }
 
             if (il == 0 || !verify_done) {
                 bool is_moe_slot = layer.ffn_gate_up_exps || layer.ffn_gate_exps || layer.ffn_up_exps || layer.ffn_down_exps;
-                fprintf(stderr, "DYN-EX L%d SLOT: gate_up=%p gate=%p up=%p down=%p is_moe_slot=%d\n",
-                    il, (void*)layer.ffn_gate_up_exps, (void*)layer.ffn_gate_exps,
-                    (void*)layer.ffn_up_exps, (void*)layer.ffn_down_exps, is_moe_slot);
                 if (is_moe_slot) {
                     verify_done = true;
                     auto print_slot = [&](ggml_tensor * slot, ggml_tensor * orig, const char * name) {
                         if (!slot) return;
-                        fprintf(stderr, "DYN-EX L%d %s SLOT: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
-                            il, name,
-                            (long long)slot->ne[0], (long long)slot->ne[1], (long long)slot->ne[2],
-                            slot->nb[0], slot->nb[1], slot->nb[2], (int)slot->type);
-                        if (orig) {
-                            if(0)fprintf(stderr, "DYN-EX L%d %s ORIG: ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
-                                il, name,
-                                (long long)orig->ne[0], (long long)orig->ne[1], (long long)orig->ne[2],
-                                orig->nb[0], orig->nb[1], orig->nb[2], (int)orig->type);
-                            GGML_ASSERT(orig->ne[0]  == slot->ne[0]  && "slot ne[0] mismatch");
-                            GGML_ASSERT(orig->ne[1]  == slot->ne[1]  && "slot ne[1] mismatch");
-                            GGML_ASSERT(orig->nb[0]  == slot->nb[0]  && "slot nb[0] mismatch");
-                            GGML_ASSERT(orig->nb[1]  == slot->nb[1]  && "slot nb[1] mismatch");
-                            GGML_ASSERT(slot->nb[2] >= orig->nb[2] && "slot nb[2] too small");
-                        }
                     };
-                    print_slot(layer.ffn_gate_up_exps, orig_gate_up, "gate_up");
-                    print_slot(layer.ffn_gate_exps,    orig_gate,    "gate");
-                    print_slot(layer.ffn_up_exps,      orig_up,      "up");
-                    print_slot(layer.ffn_down_exps,    orig_down,    "down");
                 }
             }
 
@@ -1739,26 +1692,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             if (t && t->data && de->pi_gate >= 0) {
                 void * buf_base = ggml_backend_buffer_get_base(de->buf_gate.get());
                 void * slot0_write = (char *)buf_base + 0 * de->gate_stride;
-                fprintf(stderr, "DYN-EX SLOT VERIFY: gate buf_base=%p t_data=%p slot0_write=%p gate_stride=%zu\n",
-                    buf_base, t->data, slot0_write, de->gate_stride);
                 size_t expert_size = de->gate_expert_size;
                 std::vector<uint8_t> gpu_data(64);
                 ggml_backend_tensor_get(t, gpu_data.data(), 0, 64);
                 std::vector<uint8_t> bin_full(expert_size);
                 size_t n = dyn_ex_read_param(de->reader, de->pi_gate, 0, 0, bin_full.data(), expert_size);
-                bool match = (n == expert_size && memcmp(gpu_data.data(), bin_full.data(), 64) == 0);
-                fprintf(stderr, "DYN-EX SLOT VERIFY L0 gate slot0: n=%zu expert_size=%zu gpu=%02x%02x%02x%02x... bin=%02x%02x%02x%02x... match=%d\n",
-                    n, expert_size,
-                    gpu_data[0],gpu_data[1],gpu_data[2],gpu_data[3],
-                    bin_full[0],bin_full[1],bin_full[2],bin_full[3], match);
-                if (!match) {
-                    fprintf(stderr, "DYN-EX SLOT VERIFY GPU:");
-                    for (int i = 0; i < 64; i++) fprintf(stderr, " %02x", gpu_data[i]);
-                    fprintf(stderr, "\nDYN-EX SLOT VERIFY BIN:");
-                    for (int i = 0; i < 64; i++) fprintf(stderr, " %02x", bin_full[i]);
-                    fprintf(stderr, "\n");
-                    GGML_ASSERT(match && "slot data mismatch: GPU slot != .bin source");
-                }
             }
         }
 

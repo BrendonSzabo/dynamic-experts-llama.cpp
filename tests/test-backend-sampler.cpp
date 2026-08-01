@@ -148,19 +148,7 @@ struct test_context {
         }
 
 
-        printf("Batch contents:\n");
-        printf("n_tokens: %d\n", batch.n_tokens);
-        for (int i = 0; i < batch.n_tokens; i++) {
-            printf("token[%d]: tok=%-5d, pos=%d, n_seq_id=%d, seq_ids=[", i, batch.token[i], batch.pos[i], batch.n_seq_id[i]);
-
-            for (int j = 0; j < batch.n_seq_id[i]; j++) {
-                printf("%d%s", batch.seq_id[i][j], j < batch.n_seq_id[i]-1 ? ", " : "");
-            }
-            printf("], logits=%d\n", batch.logits[i]);
-        }
-
         if (llama_decode(ctx.get(), batch) != 0) {
-            if(0) fprintf(stderr, "Warning: llama_decode failed\n");
             llama_batch_free(batch);
             return false;
         }
