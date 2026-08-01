@@ -1165,6 +1165,9 @@ void ggml_cuda_mul_mat_vec_q(
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
 
+    if (ids) fprintf(stderr, "vec_q MUL_MAT_ID ne02=%lld ne11=%lld ne12=%lld\n",
+        (long long)src0->ne[2], (long long)ne11, (long long)ne12);
+
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
     float         *  dst_d =       (float         *)  dst->data;
@@ -1256,6 +1259,12 @@ void ggml_cuda_mul_mat_vec_q(
         ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
         ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
         ne03,              ne3,           s03, s13,              s3,               ids_stride, stream);
+
+    if (ids) {
+        cudaStreamSynchronize(stream);
+        float out[4]; cudaMemcpy(out, dst_d, 16, cudaMemcpyDeviceToHost);
+        fprintf(stderr, "vec_q out: %.4f %.4f %.4f %.4f\n", out[0],out[1],out[2],out[3]);
+    }
 }
 
 void ggml_cuda_op_mul_mat_vec_q(
