@@ -1664,6 +1664,11 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_down_exps = make_slot_tensor(il, de->pi_down,
                 pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
 
+            layer.ffn_gate_exps_b    = nullptr;
+            layer.ffn_gate_up_exps_b = nullptr;
+            layer.ffn_up_exps_b      = nullptr;
+            layer.ffn_down_exps_b    = nullptr;
+
             if (il == 0 || il == n_layer_all - 1) {
                 int moe = (layer.ffn_gate_up_exps != nullptr) + (layer.ffn_gate_exps != nullptr) +
                           (layer.ffn_up_exps != nullptr) + (layer.ffn_down_exps != nullptr);

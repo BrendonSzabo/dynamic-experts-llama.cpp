@@ -1372,9 +1372,39 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 std::vector<uint8_t> gpu(esz), bin(esz);
                 ggml_backend_tensor_get(gate_t, gpu.data(), (size_t)slot_idx * gate_t->nb[2], esz);
                 size_t n = dyn_ex_read_param(de->reader, de->pi_gate, il, ids[0], bin.data(), esz);
-                bool ok = (n == esz && memcmp(gpu.data(), bin.data(), 64) == 0);
+                bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
                 fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
                     ids[0], slot_idx, gate_t->nb[2],
+                    gpu[0],gpu[1], bin[0],bin[1], ok);
+            }
+        }
+        ggml_tensor * up_t = model->layers[il].ffn_up_exps;
+        if (sm && sm->data && up_t && up_t->data) {
+            int32_t slot_idx = -2;
+            ggml_backend_tensor_get(sm, &slot_idx, ids[0] * sizeof(int32_t), sizeof(int32_t));
+            if (slot_idx >= 0) {
+                size_t esz = de->up_expert_size;
+                std::vector<uint8_t> gpu(esz), bin(esz);
+                ggml_backend_tensor_get(up_t, gpu.data(), (size_t)slot_idx * up_t->nb[2], esz);
+                size_t n = dyn_ex_read_param(de->reader, de->pi_up, il, ids[0], bin.data(), esz);
+                bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
+                fprintf(stderr, "dyn-ex verify UP  L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
+                    ids[0], slot_idx, up_t->nb[2],
+                    gpu[0],gpu[1], bin[0],bin[1], ok);
+            }
+        }
+        ggml_tensor * down_t = model->layers[il].ffn_down_exps;
+        if (sm && sm->data && down_t && down_t->data) {
+            int32_t slot_idx = -2;
+            ggml_backend_tensor_get(sm, &slot_idx, ids[0] * sizeof(int32_t), sizeof(int32_t));
+            if (slot_idx >= 0) {
+                size_t esz = de->down_expert_size;
+                std::vector<uint8_t> gpu(esz), bin(esz);
+                ggml_backend_tensor_get(down_t, gpu.data(), (size_t)slot_idx * down_t->nb[2], esz);
+                size_t n = dyn_ex_read_param(de->reader, de->pi_down, il, ids[0], bin.data(), esz);
+                bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
+                fprintf(stderr, "dyn-ex verify DOWN L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
+                    ids[0], slot_idx, down_t->nb[2],
                     gpu[0],gpu[1], bin[0],bin[1], ok);
             }
         }
