@@ -29,11 +29,6 @@ void ggml_cuda_mul_mat_f(ggml_backend_cuda_context & ctx, const ggml_tensor * sr
     GGML_ASSERT(!ids || ids->nb[0] == ggml_type_size(ids->type));
     GGML_ASSERT(        nb0        == ts_dst);
 
-    if (ids && src0->ne[2] < 128) {
-        fprintf(stderr, "dyn-ex mmf SKIP ne02=%lld, falling to sorted\n", (long long)src0->ne[2]);
-        return;
-    }
-
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
     float         *  dst_d =       (float         *)  dst->data;

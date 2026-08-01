@@ -1164,17 +1164,19 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
-    if (ids && src0->ne[2] < 128) {
-        fprintf(stderr, "dyn-ex mmvq SKIP ne02=%lld, falling to MMQ\n", (long long)src0->ne[2]);
-        return;
-    }
-
     fprintf(stderr, "dyn-ex mmvq: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ids=%p src0_data=%p\n  nb10=%zu nb11=%zu nb12=%zu s11=%lld s12=%lld\n",
         (long long)ne00, (long long)ne01, (long long)ne02,
         (long long)ne10, (long long)ne11, (long long)ne12,
         (void*)ids, src0->data,
         nb10, nb11, nb12,
         (long long)(nb11 / ts_src1), (long long)(nb12 / ts_src1));
+
+    {
+        float in[8];
+        cudaMemcpy(in, src1->data, 32, cudaMemcpyDeviceToHost);
+        fprintf(stderr, "dyn-ex mmvq input: %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+            in[0],in[1],in[2],in[3],in[4],in[5],in[6],in[7]);
+    }
 
     if (ids && src0->data) {
         uint8_t slot0[64];
