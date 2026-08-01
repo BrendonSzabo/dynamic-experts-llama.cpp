@@ -142,6 +142,7 @@ void dyn_ex_cache_free(struct dyn_ex_cache * cache);
 // ensure expert_ids are loaded into slots for the given layer (blocking).
 // updates h_slot_of / h_expert_in / h_slot_used, syncs slot_map to GPU.
 void dyn_ex_cache_ensure(struct dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids);
+void dyn_ex_cache_ensure_ordered(struct dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids);
 
 // fill initial slots with first n_slots experts of each layer
 void dyn_ex_cache_fill(struct dyn_ex_cache * cache);

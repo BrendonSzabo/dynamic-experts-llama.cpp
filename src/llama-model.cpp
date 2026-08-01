@@ -3118,6 +3118,11 @@ void llama_model::dyn_ex_ensure_layer(int layer, const int * expert_ids, int n_i
     dyn_ex_cache_ensure(pimpl->dyn_ex, layer, expert_ids, n_ids);
 }
 
+void llama_model::dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids, int n_ids) const {
+    if (!pimpl->dyn_ex) return;
+    dyn_ex_cache_ensure_ordered(pimpl->dyn_ex, layer, expert_ids, n_ids);
+}
+
 dyn_ex_cache * llama_model::dyn_ex_get_cache() const {
     return pimpl->dyn_ex;
 }

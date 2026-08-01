@@ -1347,7 +1347,19 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     std::vector<int32_t> ids(n_e);
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
 
-    model->dyn_ex_ensure_layer(il, ids.data(), n_e);
+    model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
+
+    if (il == 0 && n_e > 0) {
+        int32_t sm[8];
+        ggml_tensor * smt = model->layers[il].ffn_slot_map;
+        if (smt && smt->data) {
+            for (int i = 0; i < 8; i++) {
+                ggml_backend_tensor_get(smt, &sm[i], ids[i] * 4, 4);
+            }
+            fprintf(stderr, "dyn-ex cb L0: slot_map[%d..]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+                ids[0], sm[0],sm[1],sm[2],sm[3],sm[4],sm[5],sm[6],sm[7]);
+        }
+    }
 
     if (il == 0 && n_e > 0) {
         ggml_tensor * sm = model->layers[il].ffn_slot_map;

@@ -602,6 +602,72 @@ void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids
     }
 }
 
+void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
+    if (!cache || layer < 0 || layer >= cache->n_layers) return;
+    if (!expert_ids || n_ids <= 0) return;
+    if (n_ids > cache->n_slots) n_ids = cache->n_slots;
+
+    const int n_experts = cache->n_experts;
+    const int n_slots   = cache->n_slots;
+    const int layer_off_expert = layer * n_experts;
+    const int layer_off_slot   = layer * n_slots;
+
+    size_t max_expert_size = cache->gate_up_expert_size;
+    if (cache->gate_expert_size    > max_expert_size) max_expert_size = cache->gate_expert_size;
+    if (cache->up_expert_size      > max_expert_size) max_expert_size = cache->up_expert_size;
+    if (cache->down_expert_size    > max_expert_size) max_expert_size = cache->down_expert_size;
+    std::vector<uint8_t> cpu_buf(max_expert_size);
+    bool slot_map_changed = false;
+
+    for (int i = 0; i < n_ids; i++) {
+        int slot = i;
+        int eid = expert_ids[i];
+        if (eid < 0 || eid >= n_experts) continue;
+
+        int existing = cache->h_slot_of[layer_off_expert + eid];
+        if (existing == slot) continue;
+
+        if (existing >= 0) {
+            cache->h_slot_of[layer_off_expert + existing] = DYN_EX_SENTINEL;
+        }
+        int old_eid = cache->h_expert_in[layer_off_slot + slot];
+        if (old_eid != DYN_EX_SENTINEL && old_eid != eid) {
+            cache->h_slot_of[layer_off_expert + old_eid] = DYN_EX_SENTINEL;
+        }
+
+        if (cache->buf_gate && cache->pi_gate >= 0) {
+            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate, layer, eid, cpu_buf.data(), cache->gate_expert_size);
+            if (n == cache->gate_expert_size) {
+                raw_buf_write(cache->buf_gate.get(), (size_t)(layer_off_slot + slot) * cache->gate_stride, cpu_buf.data(), n);
+            }
+        }
+        if (cache->buf_up && cache->pi_up >= 0) {
+            size_t n = dyn_ex_read_param(cache->reader, cache->pi_up, layer, eid, cpu_buf.data(), cache->up_expert_size);
+            if (n == cache->up_expert_size) {
+                raw_buf_write(cache->buf_up.get(), (size_t)(layer_off_slot + slot) * cache->up_stride, cpu_buf.data(), n);
+            }
+        }
+        {
+            size_t n = dyn_ex_read_param(cache->reader, cache->pi_down, layer, eid, cpu_buf.data(), cache->down_expert_size);
+            if (n == cache->down_expert_size) {
+                raw_buf_write(cache->buf_down.get(), (size_t)(layer_off_slot + slot) * cache->down_stride, cpu_buf.data(), n);
+            }
+        }
+
+        cache->h_slot_of[layer_off_expert + eid] = slot;
+        cache->h_expert_in[layer_off_slot + slot] = eid;
+        cache->h_slot_used[layer_off_slot + slot] = 1;
+        slot_map_changed = true;
+    }
+
+    if (slot_map_changed && cache->buf_slot_map) {
+        size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
+        size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
+        raw_buf_write(cache->buf_slot_map.get(), layer_byte_off,
+                      cache->h_slot_of.data() + layer_off_expert, layer_byte_sz);
+    }
+}
+
 void dyn_ex_cache_fill(dyn_ex_cache * cache) {
     if (!cache) return;
     std::vector<int> ids(cache->n_slots);
