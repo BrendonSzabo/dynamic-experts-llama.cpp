@@ -1853,7 +1853,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 }
 
 static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    if(0) fprintf(stderr, "[ggml_cuda_mul_mat_id] entry\n");
+    if(1) fprintf(stderr, "dyn-ex mul_mat_id entry: ne02=%lld\n", (long long)dst->src[0]->ne[2]);
 
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
