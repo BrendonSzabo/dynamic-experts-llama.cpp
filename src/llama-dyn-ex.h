@@ -84,6 +84,15 @@ struct dyn_ex_cache {
     ggml_backend_buffer_ptr buf_down;    // [n_layers, n_slots, down_expert_size]
     ggml_backend_buffer_ptr buf_slot_map;
 
+    // FP16 dequantized buffers — shared across layers, n_expert_used slots
+    ggml_backend_buffer_ptr buf_f16_gate; // [ne0, ne1, n_expert_used] GGML_TYPE_F16
+    ggml_backend_buffer_ptr buf_f16_up;
+    ggml_backend_buffer_ptr buf_f16_down;
+    size_t f16_gate_stride = 0;
+    size_t f16_up_stride   = 0;
+    size_t f16_down_stride = 0;
+    int n_expert_used = 8;
+
     // per-layer slot_map host pointers (cudaHostAllocMapped, same as dev_ptr)
     std::vector<void *> slot_map_host;  // [n_layers] — CPU writes here, GPU reads via tensors
 

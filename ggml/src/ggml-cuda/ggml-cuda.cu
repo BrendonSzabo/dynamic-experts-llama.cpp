@@ -1878,7 +1878,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         if(0) fprintf(stderr, "  src1 and dst both F32, checking special paths...\n");
         static_assert(MMVQ_MAX_BATCH_SIZE == MMVF_MAX_BATCH_SIZE, "MMVQ and MMVF batch sizes must match");
-        if (ne2 <= MMVQ_MAX_BATCH_SIZE && ne02 >= 128) {
+        if (ne2 <= MMVQ_MAX_BATCH_SIZE) {
             if(0) fprintf(stderr, "  ne2=%lld <= MMVQ_MAX_BATCH_SIZE=%d\n", (long long)ne2, MMVQ_MAX_BATCH_SIZE);
             if (ggml_is_quantized(src0->type)) {
                 if(0) fprintf(stderr, "  src0 is quantized\n");
@@ -3569,7 +3569,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 fusion_data.gate_scale = gate_scale;
                 fusion_data.glu_op     = ggml_get_glu_op(glu);
 
-                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n) && src0->ne[2] >= 128) {
+                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n)) {
                     ggml_cuda_mul_mat_vec_q(*cuda_ctx, src0, src1, ids, cgraph->nodes[glu_idx], &fusion_data);
                     fused_mul_mat_vec = true;
                     fused_node_count  = n_ops;
@@ -3662,7 +3662,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 fusion_data.gate_scale = gate_scale;
                 fusion_data.glu_op     = ggml_get_glu_op(glu);
 
-                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n) && src0->ne[2] >= 128) {
+                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n)) {
                     ggml_cuda_mul_mat_vec_q(*cuda_ctx, src0, src1, ids, cgraph->nodes[glu_idx], &fusion_data);
                     fused_mul_mat_vec = true;
                     fused_node_count  = n_ops;
@@ -3724,7 +3724,7 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 break;
             }
 
-                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n) && src0->ne[2] >= 128) {
+                if (ggml_cuda_should_fuse_mul_mat_vec_q(up_n)) {
                 ggml_cuda_mm_fusion_args_host fusion_data{};
                 fusion_data.gate      = gate_n->src[0];
                 fusion_data.x_bias    = up_bias_tensor;

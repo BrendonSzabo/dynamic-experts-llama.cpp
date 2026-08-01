@@ -1264,12 +1264,11 @@ void ggml_cuda_mul_mat_vec_q(
 
     if (ids && src0->ne[2] == 16) {
         cudaStreamSynchronize(stream);
-        float out[8]; float in[8];
-        cudaMemcpy(out, dst_d, 32, cudaMemcpyDeviceToHost);
-        cudaMemcpy(in, src1->data, 32, cudaMemcpyDeviceToHost);
-        int isnan = 0; for (int i=0;i<8;i++) if (out[i] != out[i]) isnan++;
-        fprintf(stderr, "dyn-ex gate: in=%.2f,%.2f out=%.2f,%.2f nan=%d\n",
-            in[0],in[1], out[0],out[1], isnan);
+        std::vector<float> out(512);
+        cudaMemcpy(out.data(), dst_d, 512*4, cudaMemcpyDeviceToHost);
+        int first_nan = -1, nan_count = 0;
+        for (int i = 0; i < 512; i++) { if (out[i] != out[i]) { nan_count++; if (first_nan < 0) first_nan = i; } }
+        if (nan_count) fprintf(stderr, "dyn-ex gate NAN: first=%d count=%d\n", first_nan, nan_count);
     }
 }
 
