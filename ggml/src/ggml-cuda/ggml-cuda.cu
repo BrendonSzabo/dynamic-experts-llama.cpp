@@ -1958,7 +1958,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     std::vector<int32_t> tokens_per_expert(ne02);
     if(0) fprintf(stderr, "  tokens_per_expert size=%lld\n", (long long)ne02);
 
-    fprintf(stderr, "dyn-ex sorted: ne00=%lld ne02=%lld ne_get_rows=%lld\n",
+    if(0) fprintf(stderr, "dyn-ex sorted: ne00=%lld ne02=%lld ne_get_rows=%lld\n",
             (long long)ne00, (long long)ne02, (long long)ne_get_rows);
     ggml_cuda_pool_alloc<char> src1_sorted(ctx.pool(), ne12*n_expert_used*ne10*ts_src1_sorted);
     ggml_cuda_pool_alloc<char>  dst_sorted(ctx.pool(), ne2 *n_expert_used* ne0*ts_dst_sorted);
@@ -2071,7 +2071,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         if(0) fprintf(stderr, "    dst slice: ne={%lld,%lld,1}, data=%p\n",
                 (long long)dst_slice.ne[0], (long long)dst_slice.ne[1], (void*)dst_data_cur);
 
-        fprintf(stderr, "    src0 slice: data=%p ne=[%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
+        if(0) fprintf(stderr, "    src0 slice: data=%p ne=[%lld,%lld] nb=[%zu,%zu,%zu] type=%d\n",
                 (void*)src0_slice.data,
                 (long long)src0_slice.ne[0], (long long)src0_slice.ne[1],
                 src0_slice.nb[0], src0_slice.nb[1], src0_slice.nb[2],
@@ -2455,7 +2455,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             return false;
     }
 
-    fprintf(stderr, "dyn-ex cuda compute: op=%s name=%s\n", ggml_op_desc(dst), ggml_get_name(dst));
+    if(0) fprintf(stderr, "dyn-ex cuda compute: op=%s name=%s\n", ggml_op_desc(dst), ggml_get_name(dst));
     fflush(stderr);
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {

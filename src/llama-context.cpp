@@ -1356,7 +1356,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             for (int i = 0; i < 8; i++) {
                 ggml_backend_tensor_get(smt, &sm[i], ids[i] * 4, 4);
             }
-            fprintf(stderr, "dyn-ex cb L%d: slot_map[%d..]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+            if(0) fprintf(stderr, "dyn-ex cb L%d: slot_map[%d..]=%d,%d,%d,%d,%d,%d,%d,%d\n",
                 il, ids[0], sm[0],sm[1],sm[2],sm[3],sm[4],sm[5],sm[6],sm[7]);
         }
     }
@@ -1373,7 +1373,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 ggml_backend_tensor_get(gate_t, gpu.data(), (size_t)slot_idx * gate_t->nb[2], esz);
                 size_t n = dyn_ex_read_param(de->reader, de->pi_gate, il, ids[0], bin.data(), esz);
                 bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
-                fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
+                if(0) fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
                     ids[0], slot_idx, gate_t->nb[2],
                     gpu[0],gpu[1], bin[0],bin[1], ok);
             }
@@ -1388,7 +1388,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 ggml_backend_tensor_get(up_t, gpu.data(), (size_t)slot_idx * up_t->nb[2], esz);
                 size_t n = dyn_ex_read_param(de->reader, de->pi_up, il, ids[0], bin.data(), esz);
                 bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
-                fprintf(stderr, "dyn-ex verify UP  L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
+                if(0) fprintf(stderr, "dyn-ex verify UP  L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
                     ids[0], slot_idx, up_t->nb[2],
                     gpu[0],gpu[1], bin[0],bin[1], ok);
             }
