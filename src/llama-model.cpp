@@ -1664,6 +1664,22 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_down_exps = make_slot_tensor(il, de->pi_down,
                 pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
 
+            if (il == 0) {
+                auto dump = [](const char * tag, ggml_tensor * t) {
+                    if (!t) return;
+                    fprintf(stderr, "DYN-EX %s: type=%d ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu,%zu] data=%p\n",
+                        tag, (int)t->type,
+                        (long long)t->ne[0], (long long)t->ne[1], (long long)t->ne[2],
+                        t->nb[0], t->nb[1], t->nb[2], t->nb[3], t->data);
+                };
+                dump("ORIG_gate", orig_gate);
+                dump("SLOT_gate", layer.ffn_gate_exps);
+                dump("ORIG_up", orig_up);
+                dump("SLOT_up", layer.ffn_up_exps);
+                dump("ORIG_down", orig_down);
+                dump("SLOT_down", layer.ffn_down_exps);
+            }
+
             layer.ffn_gate_exps_b    = nullptr;
             layer.ffn_gate_up_exps_b = nullptr;
             layer.ffn_up_exps_b      = nullptr;
