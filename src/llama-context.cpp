@@ -1376,9 +1376,11 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 ggml_backend_tensor_get(gate_t, gpu.data(), (size_t)slot_idx * gate_t->nb[2], esz);
                 size_t n = dyn_ex_read_param(de->reader, de->pi_gate, il, ids[0], bin.data(), esz);
                 bool ok = (n == esz && memcmp(gpu.data(), bin.data(), esz) == 0);
-                if(0) fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
-                    ids[0], slot_idx, gate_t->nb[2],
-                    gpu[0],gpu[1], bin[0],bin[1], ok);
+                fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu match=%d\n"
+                    "  d/dmin=%02x%02x%02x%02x scales=%02x%02x... qs[0:8]=%02x%02x%02x%02x%02x%02x%02x%02x\n",
+                    ids[0], slot_idx, gate_t->nb[2], ok,
+                    gpu[0],gpu[1],gpu[2],gpu[3], gpu[4],gpu[5],
+                    gpu[16],gpu[17],gpu[18],gpu[19],gpu[20],gpu[21],gpu[22],gpu[23]);
             }
         }
         ggml_tensor * up_t = model->layers[il].ffn_up_exps;
