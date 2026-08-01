@@ -285,6 +285,9 @@ if (NOT GGML_BACKEND_DL)
     llama_build_and_test(test-quantize-perf.cpp)
     llama_build_and_test(test-rope.cpp)
     llama_build_and_test(test-col2im-1d.cpp)
+    llama_build(test-dyn-ex-reader.cpp)
+    target_include_directories(test-dyn-ex-reader PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(test-dyn-ex-reader PRIVATE llama)
 endif()
 
 # libmtmd

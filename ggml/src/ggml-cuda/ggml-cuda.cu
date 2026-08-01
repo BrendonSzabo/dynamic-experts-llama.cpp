@@ -4852,6 +4852,8 @@ static ggml_backend_buffer_type_t ggml_backend_cuda_device_get_host_buffer_type(
 static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *) dev->context;
 
+    if (op->op == GGML_OP_DYN_EX_BARRIER) return true;
+
     // check if all the sources are allocated on this device
     for (int i = 0; i < GGML_MAX_SRC; i++) {
         if (op->src[i] && op->src[i]->buffer && ggml_backend_buft_is_cuda(op->src[i]->buffer->buft)) {
@@ -5582,14 +5584,5 @@ __global__ void dyn_ex_barrier_kernel(
 }
 
 static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_tensor * src = dst->src[0];
-    int32_t * buf_d = (int32_t *)dst->data;
-    const int32_t * src_d = (const int32_t *)src->data;
-    int n_elements = (int)(src->ne[0] * src->ne[1]);
-    int n_total    = (int)dst->ne[0];
-    fprintf(stderr, "dyn-ex op barrier: dst=%s data=%p ne0=%d buf=%p\n",
-        ggml_get_name(dst), dst->data, (int)dst->ne[0], (void*)buf_d);
-    int threads = std::min(n_elements + 1, 256);
-    int blocks = (n_elements + threads) / threads;
-    dyn_ex_barrier_kernel<<<blocks, threads, 0, ctx.stream()>>>(buf_d, src_d, n_elements, n_total);
+    (void)ctx; (void)dst;
 }

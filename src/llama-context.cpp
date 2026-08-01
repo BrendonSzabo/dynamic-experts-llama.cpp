@@ -1330,6 +1330,27 @@ bool llama_context::set_adapter_cvec(
     return res;
 }
 
+
+static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
+    if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
+    if (!pre) return true;
+
+    auto * model = (const llama_model *)user_data;
+    auto * de = model->dyn_ex_get_cache();
+    if (!de) return true;
+
+    ggml_tensor * src = t->src[0];
+    if (!src || !src->data) return false;
+
+    int il = t->op_params[0];
+    int n_e = (int)(src->ne[0] * src->ne[1]);
+    std::vector<int32_t> ids(n_e);
+    ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
+
+    model->dyn_ex_ensure_layer(il, ids.data(), n_e);
+    return true;
+}
+
 llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, llm_graph_type gtype, llama_memory_context_i * mctx, ggml_status & ret) {
     if (mctx && !mctx->apply()) {
         LLAMA_LOG_ERROR("%s: failed to apply memory context\n", __func__);
@@ -1359,7 +1380,11 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-        ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+        if (model.has_dyn_ex()) {
+            ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
+        } else {
+            ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+        }
 
         //const auto t_start_us = ggml_time_us();
 
@@ -1380,16 +1405,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
         // dyn-ex: verify scheduler doesn't change slot buffers
         std::vector<std::pair<void*,void*>> slot_saved;
-        std::vector<std::pair<void*,void*>> barrier_saved;
         if (model.has_dyn_ex()) {
             for (int il = 0; il < model.hparams.n_layer_all; il++) {
                 auto * t = model.layers[il].ffn_gate_exps;
                 if (t) slot_saved.push_back({t->buffer, t->data});
-            }
-            auto * de = model.dyn_ex_get_cache();
-            for (size_t il = 0; il < de->t_barrier.size(); il++) {
-                auto * t = de->t_barrier[il];
-                barrier_saved.push_back({t ? (void*)t->buffer : nullptr, t ? t->data : nullptr});
             }
         }
 
@@ -1404,8 +1423,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             auto * t = model.layers[il].ffn_gate_exps;
             if (!t) continue;
             if (t->buffer != slot_saved[il].first || t->data != slot_saved[il].second) {
-                if(0) fprintf(stderr, "dyn-ex: L%d gate buffer CHANGED buf=%p->%p data=%p->%p\n",
-                    il, slot_saved[il].first, (void*)t->buffer, slot_saved[il].second, t->data);
                 t->buffer = (ggml_backend_buffer_t)slot_saved[il].first;
                 t->data   = slot_saved[il].second;
             }
@@ -1417,26 +1434,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
             auto * de = model.dyn_ex_get_cache();
             void * base = ggml_backend_buffer_get_base(de->buf_slot_map.get());
             if (t->data < base || t->data >= (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get())) {
-                if(0) fprintf(stderr, "dyn-ex: L%d slot_map buffer CHANGED data=%p not in [%p-%p]\n",
-                    il, t->data, base, (char*)base + ggml_backend_buffer_get_size(de->buf_slot_map.get()));
                 size_t sm_offset = (size_t)il * model.hparams.n_expert * sizeof(int32_t);
                 t->buffer = de->buf_slot_map.get();
                 t->data   = (char*)base + sm_offset;
-            }
-        }
-        {
-            auto * de = model.dyn_ex_get_cache();
-            for (size_t il = 0; il < de->t_barrier.size(); il++) {
-                if (il >= barrier_saved.size()) break;
-                auto * t = de->t_barrier[il];
-                if (!t) continue;
-                if (t->data != barrier_saved[il].second || (void*)t->buffer != barrier_saved[il].first) {
-                    fprintf(stderr, "dyn-ex: L%zu barrier RESTORE buf=%p->%p data=%p->%p\n",
-                        il, barrier_saved[il].first, (void*)t->buffer,
-                        barrier_saved[il].second, t->data);
-                    t->buffer = (ggml_backend_buffer_t)barrier_saved[il].first;
-                    t->data   = barrier_saved[il].second;
-                }
             }
         }
     }
@@ -1444,98 +1444,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     // set the input data for the input tensors
     {
         res->set_inputs(&ubatch);
-
-        //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-
-    // dyn-ex: barrier thread reads host pointers directly (cudaHostAllocMapped)
-    std::thread barrier_thread;
-    if (model.has_dyn_ex()) {
-        auto * de = model.dyn_ex_get_cache();
-        int n_layers = (int)de->t_barrier_host.size();
-        barrier_thread = std::thread([this, de, n_layers]() {
-            fprintf(stderr, "dyn-ex thread STARTED n_layers=%d host[0]=%p\n", n_layers, (void*)de->t_barrier_host[0]);
-            fflush(stderr);
-            for (int il = 0; il < n_layers; il++) {
-                int32_t * buf = (int32_t *)de->t_barrier_host[il];
-                if (!buf) { fprintf(stderr, "dyn-ex thread L%d: buf=NULL skip\n", il); continue; }
-                int n_total = (int)de->t_barrier[il]->ne[0];
-                fprintf(stderr, "dyn-ex thread L%d: buf=%p host=%p n_tot=%d\n", il,
-                    (void*)buf, (void*)de->t_barrier_host[il], n_total);
-                buf[n_total - 2] = 0;
-                buf[n_total - 1] = 0;
-                fprintf(stderr, "dyn-ex thread L%d: waiting ready...\n", il);
-                while (buf[n_total - 2] == 0) {}
-                fprintf(stderr, "dyn-ex thread L%d: GOT READY n_se=%d ids[0]=%d\n", il, buf[1], buf[1] > 0 ? buf[2] : -1);
-                model.dyn_ex_ensure_layer(il, buf + 2, buf[1]);
-                fprintf(stderr, "dyn-ex thread L%d: ensure done, setting go\n", il);
-                buf[n_total - 1] = 1;
-            }
-        });
-    }
-
-    // verify slot_map has no -1 (all experts loaded at startup)
-    if (model.has_dyn_ex()) {
-        for (int il = 0; il < model.hparams.n_layer_all; il++) {
-            auto * sm = model.layers[il].ffn_slot_map;
-            if (!sm || !sm->data) continue;
-            int32_t v0, v100, v200;
-            ggml_backend_tensor_get(sm, &v0, 0, 4);
-            ggml_backend_tensor_get(sm, &v100, 100*4, 4);
-            ggml_backend_tensor_get(sm, &v200, 200*4, 4);
-            if (v0 < 0 || v100 < 0 || v200 < 0) {
-                if(0) fprintf(stderr, "dyn-ex BAD slot_map L%d: [0]=%d [100]=%d [200]=%d\n", il, v0, v100, v200);
-            }
-        }
-    }
-    // verify critical tensors have data after alloc
-    if (model.has_dyn_ex()) {
-        ggml_cgraph * gf = res->get_gf();
-        for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
-            ggml_tensor * t = ggml_graph_node(gf, i);
-            // if (t->op == GGML_OP_ARGSORT) {
-            //     if(0) fprintf(stderr, "dyn-ex pre-compute: argsort data=%p buf=%p ne=[%lld,%lld]\n",
-            //         t->data, (void*)t->buffer, (long long)t->ne[0], (long long)t->ne[1]);
-            // }
-            // if (t->op == GGML_OP_GET_ROWS) {
-            //     if(0) fprintf(stderr, "dyn-ex pre-compute: get_rows %s data=%p buf=%p\n",
-            //         ggml_get_name(t), t->data, (void*)t->buffer);
-            // }
-        }
-    }
-    // verify remap output has valid slot indices (0..7)
-    if (model.has_dyn_ex()) {
-        ggml_cgraph * gf = res->get_gf();
-        for (int i = 0; i < ggml_graph_n_nodes(gf); i++) {
-            ggml_tensor * t = ggml_graph_node(gf, i);
-            if (strncmp(ggml_get_name(t), "ffn_moe_slots", 12) == 0 && t->data) {
-                std::vector<int32_t> v(std::min((int64_t)8, t->ne[0] * t->ne[1]));
-                ggml_backend_tensor_get(t, v.data(), 0, v.size()*4);
-                // if(0) fprintf(stderr, "dyn-ex remap output %s: ne=[%lld,%lld] data=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
-                //     ggml_get_name(t), (long long)t->ne[0], (long long)t->ne[1],
-                //     v[0], v.size()>1?v[1]:-1, v.size()>2?v[2]:-1, v.size()>3?v[3]:-1,
-                //     v.size()>4?v[4]:-1, v.size()>5?v[5]:-1, v.size()>6?v[6]:-1, v.size()>7?v[7]:-1);
-                break;
-            }
-        }
-    }
-    // verify slot_map data (raw GPU buffer)
-    if (model.has_dyn_ex() && model.layers[0].ffn_slot_map) {
-        auto * sm = model.layers[0].ffn_slot_map;
-        int32_t v0, v1, v2, v3, v8, v64;
-        ggml_backend_tensor_get(sm, &v0, 0, 4);
-        ggml_backend_tensor_get(sm, &v1, 4, 4);
-        ggml_backend_tensor_get(sm, &v2, 8, 4);
-        ggml_backend_tensor_get(sm, &v3, 12, 4);
-        ggml_backend_tensor_get(sm, &v8, 32, 4);
-        ggml_backend_tensor_get(sm, &v64, 256, 4);
-        if(0) fprintf(stderr, "dyn-ex slot_map: [0]=%d [1]=%d [2]=%d [3]=%d [8]=%d [64]=%d\n",
-            v0, v1, v2, v3, v8, v64);
-    }
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
-
-    if (barrier_thread.joinable()) barrier_thread.join();
 
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);

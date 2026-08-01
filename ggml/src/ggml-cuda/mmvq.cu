@@ -1164,6 +1164,11 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
+    fprintf(stderr, "dyn-ex mmvq: ne00=%lld ne01=%lld ne02=%lld ne11=%lld ne12=%lld ids=%p src0_data=%p\n",
+        (long long)ne00, (long long)ne01, (long long)ne02,
+        (long long)ne11, (long long)ne12,
+        (void*)ids, src0->data);
+
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
     float         *  dst_d =       (float         *)  dst->data;

@@ -181,13 +181,20 @@ void ggml_cuda_mul_mat_q(
     const int64_t ne_get_rows = ne12 * n_expert_used;
     GGML_ASSERT(ne1 == n_expert_used);
 
+    fprintf(stderr, "dyn-ex mmq MoE: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ne_get_rows=%lld\n",
+        (long long)ne00, (long long)ne01, (long long)ne02,
+        (long long)ne10, (long long)ne11, (long long)ne12,
+        (long long)ne_get_rows);
+    fprintf(stderr, "dyn-ex mmq MoE: nb00=%zu nb02=%zu s02=%lld src0_data=%p\n",
+        nb00, nb02, (long long)(nb02 / ts_src0), src0_d);
+
     ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 1);
 
     // gate/up activations are broadcast across experts (ne11 == 1): quantize each token once and
     // scatter to its slots. ids_src1 then holds the inverse map (token slot -> compact row).
-    const bool dedup_bcast = true;
+    const bool dedup_bcast = false;
 
     {
         GGML_ASSERT(ids->nb[0] == ggml_element_size(ids));
@@ -196,6 +203,13 @@ void ggml_cuda_mul_mat_q(
 
         ggml_cuda_launch_mm_ids_helper((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
             ne02, ne12, n_expert_used, ne11, si1, sis1, /*write_inverse =*/ dedup_bcast, stream);
+        {
+            std::vector<int32_t> bounds((size_t)ne02 + 1);
+            cudaMemcpy(bounds.data(), expert_bounds.get(), ((size_t)ne02 + 1) * 4, cudaMemcpyDeviceToHost);
+            fprintf(stderr, "dyn-ex mmq bounds: ne02=%lld total=%d :", (long long)ne02, bounds[(int)ne02]);
+            for (int i = 0; i < (int)ne02 && i < 16; i++) fprintf(stderr, " %d", bounds[i]);
+            fprintf(stderr, "\n");
+        }
         {
             std::vector<int32_t> tmp(8);
             cudaMemcpy(tmp.data(), ids->data, 32, cudaMemcpyDeviceToHost);

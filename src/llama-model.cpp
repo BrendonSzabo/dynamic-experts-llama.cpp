@@ -1664,6 +1664,12 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             layer.ffn_down_exps = make_slot_tensor(il, de->pi_down,
                 pimpl->dyn_ex->buf_down, pimpl->dyn_ex->down_expert_size);
 
+            if (il == 0 || il == n_layer_all - 1) {
+                int moe = (layer.ffn_gate_up_exps != nullptr) + (layer.ffn_gate_exps != nullptr) +
+                          (layer.ffn_up_exps != nullptr) + (layer.ffn_down_exps != nullptr);
+                fprintf(stderr, "DYN-EX L%d MOE: %d slot tensors non-null\n", il, moe);
+            }
+
             if (il == 0 || !verify_done) {
                 bool is_moe_slot = layer.ffn_gate_up_exps || layer.ffn_gate_exps || layer.ffn_up_exps || layer.ffn_down_exps;
                 fprintf(stderr, "DYN-EX L%d SLOT: gate_up=%p gate=%p up=%p down=%p is_moe_slot=%d\n",

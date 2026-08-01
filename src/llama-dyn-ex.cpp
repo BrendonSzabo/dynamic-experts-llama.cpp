@@ -871,26 +871,15 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
 void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
     int max_el = n_expert_used * 4096;
     for (int i = 0; i < n_layers; i++) {
-#ifdef GGML_USE_CUDA
-        void * hp = nullptr;
-        if (cudaHostAlloc(&hp, (max_el + 2) * sizeof(int32_t), cudaHostAllocMapped) == cudaSuccess && hp) {
-            memset(hp, 0, (max_el + 2) * sizeof(int32_t));
-            void * dp = nullptr;
-            cudaHostGetDevicePointer(&dp, hp, 0);
-            auto * t = new ggml_tensor();
-            memset(t, 0, sizeof(ggml_tensor));
-            t->type = GGML_TYPE_I32;
-            t->ne[0] = max_el + 2; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
-            t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
-            t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
-            t->data = dp;
-            t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
-            cache->t_barrier.push_back(t);
-            cache->t_barrier_host.push_back(hp);
-            continue;
-        }
-#endif
-        cache->t_barrier.push_back(nullptr);
+        auto * t = new ggml_tensor();
+        memset(t, 0, sizeof(ggml_tensor));
+        t->type = GGML_TYPE_I32;
+        t->ne[0] = max_el + 2; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
+        t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
+        t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
+        t->op_params[0] = i;
+        t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
+        cache->t_barrier.push_back(t);
         cache->t_barrier_host.push_back(nullptr);
     }
 }

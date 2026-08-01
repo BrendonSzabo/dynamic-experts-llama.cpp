@@ -1961,9 +1961,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         bar->src[0] = selected_experts;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
-        // make remap depend on barrier: read selected_experts from bar output
-        selected_experts = ggml_view_2d(ctx0, bar, selected_experts->ne[0], selected_experts->ne[1],
-                                         sizeof(int32_t) * selected_experts->ne[0], 2 * sizeof(int32_t));
     }
 
     // remap AFTER barrier (slot_map updated by ensure)

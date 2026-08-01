@@ -469,6 +469,8 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
             return (src0->type == GGML_TYPE_F32 ||
                     ((src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && src0->ne[2] == src1->ne[2] && src0->ne[3] == src1->ne[3])) &&
                 src1->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32;
+        case GGML_OP_DYN_EX_BARRIER:
+            return false;
         default:
             return true;
     }
