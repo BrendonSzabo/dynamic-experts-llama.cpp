@@ -1348,6 +1348,25 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
 
     model->dyn_ex_ensure_layer(il, ids.data(), n_e);
+
+    if (il == 0 && n_e > 0) {
+        ggml_tensor * sm = model->layers[il].ffn_slot_map;
+        ggml_tensor * gate_t = model->layers[il].ffn_gate_exps;
+        if (sm && sm->data && gate_t && gate_t->data) {
+            int32_t slot_idx = -2;
+            ggml_backend_tensor_get(sm, &slot_idx, ids[0] * sizeof(int32_t), sizeof(int32_t));
+            if (slot_idx >= 0) {
+                size_t esz = de->gate_expert_size;
+                std::vector<uint8_t> gpu(esz), bin(esz);
+                ggml_backend_tensor_get(gate_t, gpu.data(), (size_t)slot_idx * gate_t->nb[2], esz);
+                size_t n = dyn_ex_read_param(de->reader, de->pi_gate, il, ids[0], bin.data(), esz);
+                bool ok = (n == esz && memcmp(gpu.data(), bin.data(), 64) == 0);
+                fprintf(stderr, "dyn-ex verify L0 e%d slot%d: nb2=%zu gpu=%02x%02x... bin=%02x%02x... match=%d\n",
+                    ids[0], slot_idx, gate_t->nb[2],
+                    gpu[0],gpu[1], bin[0],bin[1], ok);
+            }
+        }
+    }
     return true;
 }
 

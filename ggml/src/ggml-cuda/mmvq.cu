@@ -1169,6 +1169,16 @@ void ggml_cuda_mul_mat_vec_q(
         (long long)ne11, (long long)ne12,
         (void*)ids, src0->data);
 
+    if (ids && src0->data) {
+        uint8_t slot0[64];
+        cudaMemcpy(slot0, src0->data, 64, cudaMemcpyDeviceToHost);
+        int32_t id_vals[8];
+        cudaMemcpy(id_vals, ids->data, 32, cudaMemcpyDeviceToHost);
+        fprintf(stderr, "dyn-ex mmvq verify: src0_data=%p slot0=%02x%02x%02x%02x nb2=%zu ids=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
+            src0->data, slot0[0],slot0[1],slot0[2],slot0[3], src0->nb[2],
+            id_vals[0],id_vals[1],id_vals[2],id_vals[3],id_vals[4],id_vals[5],id_vals[6],id_vals[7]);
+    }
+
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
     float         *  dst_d =       (float         *)  dst->data;
@@ -1260,6 +1270,14 @@ void ggml_cuda_mul_mat_vec_q(
         ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
         ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
         ne03,              ne3,           s03, s13,              s3,               ids_stride, stream);
+
+    if (ids) {
+        cudaStreamSynchronize(stream);
+        float out[8];
+        cudaMemcpy(out, dst_d, 32, cudaMemcpyDeviceToHost);
+        fprintf(stderr, "dyn-ex mmvq out: dst[0..7]=%.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f\n",
+            out[0],out[1],out[2],out[3],out[4],out[5],out[6],out[7]);
+    }
 }
 
 void ggml_cuda_op_mul_mat_vec_q(
