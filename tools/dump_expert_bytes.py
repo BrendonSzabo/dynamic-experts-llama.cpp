@@ -25,11 +25,14 @@ with open(BIN, "rb") as f:
     magic = f.read(6)
     ver, nl, ne = struct.unpack("<III", f.read(12))
     es = struct.unpack("<Q", f.read(8))[0]
-    f.seek(16384)  # skip header
+    # gate_proj is the second param. Skip down_proj data.
+    # down_proj: 512*2048*210/256 = 860160 bytes per expert, stride 860160
+    # gate base = 16384 + nl*ne*860160
+    gate_base = 16384 + nl * ne * 860160
+    f.seek(gate_base + 0*ne*589824 + 0*589824)
     dump_hex(f"BIN {BIN} L0 E0 gate_proj", f.read(589824))
 
-    # Verify match
-    f.seek(16384)
+    f.seek(gate_base + 0*ne*589824 + 0*589824)
     bin_e0 = f.read(589824)
     gguf_t = next((t for t in r.tensors if t.name == "blk.0.ffn_gate_exps.weight"), None)
     gguf_raw = bytes(gguf_t.data) if isinstance(gguf_t.data, memoryview) else bytes(gguf_t.data)

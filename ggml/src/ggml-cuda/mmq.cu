@@ -301,8 +301,6 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
     return false;
 #endif // GGML_CUDA_FORCE_CUBLAS
 
-    if (n_experts > 0 && n_experts < 128) return false;
-
     bool mmq_supported;
 
     switch (type) {

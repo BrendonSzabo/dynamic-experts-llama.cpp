@@ -1164,11 +1164,6 @@ void ggml_cuda_mul_mat_vec_q(
 
     GGML_ASSERT(!ids || ne12 <= MMVQ_MAX_BATCH_SIZE);
 
-    if (ids && src0->ne[2] == 16) {
-        fprintf(stderr, "dyn-ex vec_q SKIP ne02=16\n");
-        return;
-    }
-
 
     const float   * src1_d =       (const float   *) src1->data;
     const int32_t *  ids_d = ids ? (const int32_t *)  ids->data : nullptr;
@@ -1261,15 +1256,6 @@ void ggml_cuda_mul_mat_vec_q(
         ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
         ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
         ne03,              ne3,           s03, s13,              s3,               ids_stride, stream);
-
-    if (ids && src0->ne[2] == 16) {
-        cudaStreamSynchronize(stream);
-        std::vector<float> out(512);
-        cudaMemcpy(out.data(), dst_d, 512*4, cudaMemcpyDeviceToHost);
-        int first_nan = -1, nan_count = 0;
-        for (int i = 0; i < 512; i++) { if (out[i] != out[i]) { nan_count++; if (first_nan < 0) first_nan = i; } }
-        if (nan_count) fprintf(stderr, "dyn-ex gate NAN: first=%d count=%d\n", first_nan, nan_count);
-    }
 }
 
 void ggml_cuda_op_mul_mat_vec_q(
