@@ -915,43 +915,6 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, i
         t->op_params[0] = i;
         t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
         cache->t_barrier.push_back(t);
-        cache->t_barrier_host.push_back(nullptr);
-    }
-
-    // slot IDs tensor — pre-allocated GPU buffer, one per layer
-    // shape [n_expert_used, 1] I32 — barrier callback writes slot indices here,
-    // MUL_MAT_ID reads them directly (no get_rows remap)
-    {
-        auto buft = ggml_backend_dev_buffer_type(dev);
-        int max_batch = 4096;
-        size_t per_layer = (size_t)n_expert_used * max_batch * sizeof(int32_t);
-        size_t total = (size_t)n_layers * per_layer;
-        cache->buf_slot_ids.reset(ggml_backend_buft_alloc_buffer(buft, total));
-        cache->t_slot_ids.resize(n_layers);
-        for (int i = 0; i < n_layers; i++) {
-            auto * t = new ggml_tensor();
-            memset(t, 0, sizeof(ggml_tensor));
-            t->type   = GGML_TYPE_I32;
-            t->ne[0]  = n_expert_used;
-            t->ne[1]  = max_batch;
-            t->ne[2]  = 1;
-            t->ne[3]  = 1;
-            t->nb[0]  = sizeof(int32_t);
-            t->nb[1]  = t->nb[0] * n_expert_used;
-            t->nb[2]  = t->nb[1] * max_batch;
-            t->nb[3]  = t->nb[2];
-            t->flags  = GGML_TENSOR_FLAG_EXTERNAL;
-            size_t off = (size_t)i * per_layer;
-            ggml_backend_tensor_alloc(cache->buf_slot_ids.get(), t,
-                (char *)ggml_backend_buffer_get_base(cache->buf_slot_ids.get()) + off);
-            cache->t_slot_ids[i] = t;
-        }
-    }
-
-    // link barrier tensors to their slot_ids — src[1] = slot_ids tensor
-    for (int i = 0; i < n_layers && i < (int)cache->t_slot_ids.size(); i++) {
-        if (cache->t_barrier[i]) {
-            cache->t_barrier[i]->src[1] = cache->t_slot_ids[i];
-        }
+         cache->t_barrier_host.push_back(nullptr);
     }
 }

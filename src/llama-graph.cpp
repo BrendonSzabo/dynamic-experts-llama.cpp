@@ -1959,16 +1959,14 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
+        // create slot_ids tensor through the graph so scheduler allocates it
+        ggml_tensor * slot_ids = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, n_tokens);
+        ggml_build_forward_expand(gf, slot_ids);
+        bar->src[1] = slot_ids;
+        selected_experts_slots = slot_ids;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
-    }
-
-    if (slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
-        ggml_tensor * bar = (*dyn_ex_barrier)[il];
-        if (!is_reserve && bar->src[1]) {
-            selected_experts_slots = ggml_view_2d(ctx0, bar->src[1], n_expert_used, n_tokens, bar->src[1]->nb[1], 0);
-            cb(selected_experts_slots, "ffn_moe_slots", il);
-        }
+        cb(selected_experts_slots, "ffn_moe_slots", il);
     }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {

@@ -125,10 +125,6 @@ struct dyn_ex_cache {
     std::vector<ggml_tensor *>           t_barrier;   // per-layer barrier tensors
     std::vector<void *>                  t_barrier_host; // host pointers for CPU access
 
-    // slot IDs for MUL_MAT_ID — written by barrier callback, read by MUL_MAT_ID
-    ggml_backend_buffer_ptr buf_slot_ids; // GPU buffer, [n_layers * n_expert_used] int32
-    std::vector<ggml_tensor *> t_slot_ids; // per-layer tensors pointing into buf_slot_ids
-
     size_t gate_up_stride = 0; // bytes per slot in gate_up buffer (aligned)
     size_t gate_stride    = 0; // bytes per slot in gate buffer (separate, aligned)
     size_t up_stride      = 0; // bytes per slot in up buffer (separate, aligned)
