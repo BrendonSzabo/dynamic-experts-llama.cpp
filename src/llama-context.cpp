@@ -53,7 +53,7 @@ static const llm_fused_op_probe llm_fused_op_gdn_ar_probe = {
     /*.n_tokens_per_seq =*/ 1,
 };
 
-static const llm_fused_op_probe llm_fused_op_gdn_ch_probe = {
+static llm_fused_op_probe llm_fused_op_gdn_ch_probe = {
     /*.op               =*/ LLM_FUSED_OP_GDN_CH,
     /*.name             =*/ "fused Gated Delta Net (chunked)",
     /*.n_tokens_per_seq =*/ 16,
@@ -330,6 +330,12 @@ llama_context::llama_context(
     cparams.n_batch = cparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
+    if (model.has_dyn_ex()) {
+        llm_fused_op_gdn_ch_probe.n_tokens_per_seq = 1;
+        uint32_t max_b = model.dyn_ex_get_cache()->n_slots / (uint32_t)model.hparams.n_expert_used;
+        if (max_b < 1) max_b = 1;
+        cparams.n_ubatch = std::min(cparams.n_ubatch, max_b);
+    }
 
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
 
