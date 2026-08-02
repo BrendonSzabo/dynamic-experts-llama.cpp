@@ -1284,8 +1284,6 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         ggml_tensor * t_meta = get_tensor_meta(tn.str().c_str());
         if (t_meta && t_meta->ne[2] > (int64_t)dyn_ex_n_slots) {
             t_meta->ne[2] = dyn_ex_n_slots;
-            t_meta->nb[2] = t_meta->nb[1] * t_meta->ne[1];
-            t_meta->nb[3] = t_meta->nb[2] * t_meta->ne[2];
         }
     }
     const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne_virt, !(flags & TENSOR_NOT_REQUIRED));
