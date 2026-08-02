@@ -338,6 +338,11 @@ extern "C" {
         bool no_host;         // bypass host buffer allowing extra buffers to be used
         bool no_alloc;        // only load metadata and simulate memory allocations
         bool load_mtp;        // whether to load MTP layers
+
+        // dyn-ex: dynamic expert offloading
+        const char * dyn_ex_path;       // path to VLLM\x02 .bin file (NULL = disabled)
+        int32_t      dyn_ex_n_slots;    // number of GPU slots per layer (0 = disabled)
+        const char * dyn_ex_predictor;  // path to MLP predictor weights (NULL = disabled)
     };
 
     struct llama_sampler_seq_config {

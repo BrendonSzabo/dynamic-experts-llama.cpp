@@ -1247,6 +1247,19 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     }
 
     ggml_tensor * t_meta = get_tensor_meta(tn.str().c_str());
+
+    // dyn-ex: virtualize routed expert tensors from n_expert to n_slots
+    if (dyn_ex_n_slots > 0 && t_meta && t_meta->op == GGML_OP_MUL_MAT_ID) {
+        size_t saved_nbytes = ggml_nbytes(t_meta);
+        t_meta->ne[2] = dyn_ex_n_slots;
+        t_meta->nb[0] = ggml_type_size(t_meta->type);
+        t_meta->nb[1] = t_meta->nb[0] * (t_meta->ne[0] / ggml_blck_size(t_meta->type));
+        t_meta->nb[2] = t_meta->nb[1] * t_meta->ne[1];
+        t_meta->nb[3] = t_meta->nb[2];
+        size_t new_nbytes = ggml_nbytes(t_meta);
+        size_data -= (saved_nbytes - new_nbytes);
+    }
+
     ggml_backend_buffer_type_t buft = buft_for_tensor(t_meta);
     if (buft == nullptr) {
         return nullptr; // return type is ggml_tensor *

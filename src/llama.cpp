@@ -307,6 +307,10 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
         llama_model_loader ml(metadata, set_tensor_data, set_tensor_data_ud, fname, splits, file, params.load_mode,
             params.check_tensors, params.no_alloc, params.load_mtp, params.kv_overrides, params.tensor_buft_overrides);
 
+        if (params.dyn_ex_n_slots > 0) {
+            ml.dyn_ex_n_slots = params.dyn_ex_n_slots;
+        }
+
         ml.print_info();
         std::unique_ptr<llama_model> model_ptr(llama_model_create(ml, params));
 
