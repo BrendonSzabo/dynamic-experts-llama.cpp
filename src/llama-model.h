@@ -699,7 +699,7 @@ struct llama_model {
     bool has_dyn_ex() const;
     struct dyn_ex_cache * dyn_ex_get_cache() const;
     void dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids, int n_ids) const;
-    bool dyn_ex_init(const char * path, int n_slots);
+    bool dyn_ex_init(const char * path, int n_slots, ggml_backend_dev_t gpu_dev);
 
 protected:
     llama_model_params params;

@@ -363,7 +363,14 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
 
         // dyn-ex: initialize slot cache
         if (params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]) {
-            if (!model->dyn_ex_init(params.dyn_ex_path, params.dyn_ex_n_slots)) {
+            ggml_backend_dev_t gpu_dev = nullptr;
+            for (int i = 0; params.devices && params.devices[i]; i++) {
+                if (ggml_backend_dev_type(params.devices[i]) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                    gpu_dev = params.devices[i];
+                    break;
+                }
+            }
+            if (!model->dyn_ex_init(params.dyn_ex_path, params.dyn_ex_n_slots, gpu_dev)) {
                 LLAMA_LOG_ERROR("dyn-ex: failed to init cache\n");
                 return {-1, nullptr};
             }

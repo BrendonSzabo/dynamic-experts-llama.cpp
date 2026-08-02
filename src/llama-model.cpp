@@ -1073,7 +1073,7 @@ void llama_model::dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids,
     dyn_ex_cache_ensure_ordered(pimpl->dyn_ex, layer, expert_ids, n_ids);
 }
 
-bool llama_model::dyn_ex_init(const char * path, int n_slots) {
+bool llama_model::dyn_ex_init(const char * path, int n_slots, ggml_backend_dev_t gpu_dev) {
     auto * reader = dyn_ex_reader_open(path);
     if (!reader) return false;
     pimpl->dyn_ex = dyn_ex_cache_init(reader, n_slots, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
@@ -1081,6 +1081,39 @@ bool llama_model::dyn_ex_init(const char * path, int n_slots) {
         dyn_ex_reader_close(reader);
         return false;
     }
+
+    if (gpu_dev) {
+        auto buft = ggml_backend_dev_buffer_type(gpu_dev);
+        auto make_gpu = [&](ggml_tensor * cpu_t, ggml_tensor *& slot) {
+            if (!cpu_t) return;
+            size_t sz = ggml_nbytes(cpu_t);
+            ggml_backend_buffer_ptr buf(ggml_backend_buft_alloc_buffer(buft, sz));
+            if (!buf) return;
+            ggml_tensor * t = new ggml_tensor();
+            memset(t, 0, sizeof(ggml_tensor));
+            t->type   = cpu_t->type;
+            t->ne[0]  = cpu_t->ne[0];
+            t->ne[1]  = cpu_t->ne[1];
+            t->ne[2]  = cpu_t->ne[2];
+            t->ne[3]  = 1;
+            t->nb[0]  = cpu_t->nb[0];
+            t->nb[1]  = cpu_t->nb[1];
+            t->nb[2]  = cpu_t->nb[2];
+            t->nb[3]  = t->nb[2] * t->ne[2];
+            t->flags  = GGML_TENSOR_FLAG_EXTERNAL;
+            t->buffer = buf.release();
+            t->data   = ggml_backend_buffer_get_base(t->buffer);
+            slot = t;
+        };
+        for (int il = 0; il < (int)layers.size(); il++) {
+            auto & L = layers[il];
+            make_gpu(L.ffn_gate_exps,    L.ffn_gate_exps);
+            make_gpu(L.ffn_up_exps,      L.ffn_up_exps);
+            make_gpu(L.ffn_down_exps,    L.ffn_down_exps);
+            make_gpu(L.ffn_gate_up_exps, L.ffn_gate_up_exps);
+        }
+    }
+
     dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, nullptr, (int)hparams.n_layer(), (int)hparams.n_expert_used);
     return true;
 }

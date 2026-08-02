@@ -122,11 +122,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             size_t n = dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), expert_size);
             if (n != expert_size) return;
             size_t off = (size_t)slot * expert_size;
-#ifdef GGML_USE_CUDA
             cudaMemcpy((char *)t->data + off, cpu_buf.data(), n, cudaMemcpyHostToDevice);
-#else
-            memcpy((char *)t->data + off, cpu_buf.data(), n);
-#endif
         };
 
         write_expert(layer.ffn_gate_exps, de->pi_gate, de->gate_expert_size);
