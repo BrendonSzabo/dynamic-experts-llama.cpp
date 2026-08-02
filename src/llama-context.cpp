@@ -335,6 +335,7 @@ llama_context::llama_context(
         uint32_t max_b = model.dyn_ex_get_cache()->n_slots / (uint32_t)model.hparams.n_expert_used;
         if (max_b < 1) max_b = 1;
         cparams.n_ubatch = std::min(cparams.n_ubatch, max_b);
+        graph_reuse_disable = true;
     }
 
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
