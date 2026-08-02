@@ -1954,19 +1954,35 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     ggml_tensor * selected_experts_slots = selected_experts;
 
-    // barrier: GPU writes expert IDs, CPU loads weights, writes slot IDs to t_slot_ids
+    // barrier: GPU writes expert IDs, CPU loads weights, GPU continues
     if (!is_reserve && slot_map != nullptr && dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
-        // create slot_ids with fixed max size, view actual batch for MUL_MAT_ID
-        ggml_tensor * slot_ids_full = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, 256);
-        ggml_build_forward_expand(gf, slot_ids_full);
-        bar->src[1] = slot_ids_full;
-        selected_experts_slots = ggml_view_2d(ctx0, slot_ids_full, n_expert_used, n_tokens, slot_ids_full->nb[1], 0);
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
+    }
+
+    // remap AFTER barrier (slot_map updated by ensure)
+    if (slot_map != nullptr) {
+        // if(0) fprintf(stderr, "dyn-ex remap L%d: sm->buffer=%p sm->data=%p\n", il,
+        //     (void*)(slot_map->buffer), slot_map->data);
+        fflush(stderr);
+        ggml_tensor * se_cont = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
+        se_cont = ggml_cpy(ctx0, selected_experts, se_cont);
+        ggml_build_forward_expand(gf, se_cont);
+        ggml_tensor * flat = ggml_reshape_2d(ctx0, se_cont, selected_experts->ne[0] * selected_experts->ne[1], 1);
+        selected_experts_slots = ggml_get_rows(ctx0, slot_map, flat);
+        selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], n_tokens);
+        selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
+        // if(0) fprintf(stderr, "dyn-ex remap L%d: data=%p buf=%p ne=[%lld,%lld]\n", il,
+        //     selected_experts_slots->data, (void*)selected_experts_slots->buffer,
+        //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
+        // if(0) fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
+        //     selected_experts_slots->nb[0], selected_experts_slots->nb[1],
+        //     selected_experts_slots->nb[2], selected_experts_slots->nb[3],
+        //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
     }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {

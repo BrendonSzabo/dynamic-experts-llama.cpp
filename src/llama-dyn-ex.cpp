@@ -903,7 +903,6 @@ void dyn_ex_predictor_predict(dyn_ex_predictor * p,
 }
 
 void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
-    // barrier tensors (no buffer, used only for eval callback)
     int max_el = n_expert_used * 4096;
     for (int i = 0; i < n_layers; i++) {
         auto * t = new ggml_tensor();
@@ -915,6 +914,6 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, i
         t->op_params[0] = i;
         t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
         cache->t_barrier.push_back(t);
-         cache->t_barrier_host.push_back(nullptr);
+        cache->t_barrier_host.push_back(nullptr);
     }
 }

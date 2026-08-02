@@ -1346,18 +1346,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
 
-    // write slot IDs into MUL_MAT_ID tensor (t->src[1], set during graph build)
-    if (t->src[1]) {
-        int base = il * de->n_experts;
-        std::vector<int32_t> slots(n_e);
-        for (int i = 0; i < n_e; i++) {
-            int eid = ids[i];
-            slots[i] = (eid >= 0 && eid < de->n_experts) ? de->h_slot_of[base + eid] : -1;
-        }
-        ggml_backend_tensor_set(t->src[1], slots.data(), 0, n_e * sizeof(int32_t));
-    }
-
-    if(il < 3) fprintf(stderr, "dyn-ex L%d: ids[0..7]=%d,%d,%d,%d,%d,%d,%d,%d\n",
+    if(0) fprintf(stderr, "dyn-ex L%d: ids[0..7]=%d,%d,%d,%d,%d,%d,%d,%d\n",
         il, ids[0],ids[1],ids[2],ids[3],ids[4],ids[5],ids[6],ids[7]);
 
     if ((il == 0 || il == 3) && n_e > 0) {
