@@ -843,6 +843,8 @@ public:
 
     std::vector<ggml_tensor *> t_layer_inp;
 
+    std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
+
     std::map<llama_seq_id, ggml_tensor *> t_sampled_logits;
     std::map<llama_seq_id, ggml_tensor *> t_candidates;
     std::map<llama_seq_id, ggml_tensor *> t_sampled;
@@ -939,6 +941,8 @@ struct llm_graph_context {
 
     ggml_context * ctx0 = nullptr;
     ggml_cgraph  * gf   = nullptr;
+
+    std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
 
     llm_graph_context(const llm_graph_params & params);
     virtual ~llm_graph_context() = default;

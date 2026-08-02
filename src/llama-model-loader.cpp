@@ -1275,7 +1275,20 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     }
 
     LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
-    const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne, !(flags & TENSOR_NOT_REQUIRED));
+
+    // dyn-ex: virtualize expert tensors with ne[2] > n_slots
+    std::vector<int64_t> ne_virt(ne.begin(), ne.end());
+    if (dyn_ex_n_slots > 0 && ne_virt.size() > 2 && ne_virt[2] > dyn_ex_n_slots) {
+        ne_virt[2] = dyn_ex_n_slots;
+        // also override the gguf tensor metadata before the dim check
+        ggml_tensor * t_meta = get_tensor_meta(tn.str().c_str());
+        if (t_meta && t_meta->ne[2] > (int64_t)dyn_ex_n_slots) {
+            t_meta->ne[2] = dyn_ex_n_slots;
+            t_meta->nb[2] = t_meta->nb[1] * t_meta->ne[1];
+            t_meta->nb[3] = t_meta->nb[2] * t_meta->ne[2];
+        }
+    }
+    const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne_virt, !(flags & TENSOR_NOT_REQUIRED));
 
     if (cur == NULL) {
         return NULL;

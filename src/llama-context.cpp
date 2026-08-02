@@ -15,6 +15,9 @@
 
 #include <cinttypes>
 #include <cmath>
+#ifdef GGML_USE_CUDA
+#include <cuda_runtime.h>
+#endif
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -114,38 +117,22 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         int eid = ids[slot];
         if (eid < 0 || eid >= reader->n_experts) continue;
 
-        // write gate weights
-        if (layer.ffn_gate_exps && de->pi_gate >= 0) {
-            size_t n = dyn_ex_read_param(reader, de->pi_gate, il, eid, cpu_buf.data(), de->gate_expert_size);
-            if (n == de->gate_expert_size) {
-                size_t off = (size_t)slot * de->gate_expert_size;
-                ggml_backend_tensor_set(layer.ffn_gate_exps, cpu_buf.data(), off, n);
-            }
-        }
-        // write up weights
-        if (layer.ffn_up_exps && de->pi_up >= 0) {
-            size_t n = dyn_ex_read_param(reader, de->pi_up, il, eid, cpu_buf.data(), de->up_expert_size);
-            if (n == de->up_expert_size) {
-                size_t off = (size_t)slot * de->up_expert_size;
-                ggml_backend_tensor_set(layer.ffn_up_exps, cpu_buf.data(), off, n);
-            }
-        }
-        // write gate_up weights (merged)
-        if (layer.ffn_gate_up_exps && de->pi_gate_up >= 0) {
-            size_t n = dyn_ex_read_param(reader, de->pi_gate_up, il, eid, cpu_buf.data(), de->gate_up_expert_size);
-            if (n == de->gate_up_expert_size) {
-                size_t off = (size_t)slot * de->gate_up_expert_size;
-                ggml_backend_tensor_set(layer.ffn_gate_up_exps, cpu_buf.data(), off, n);
-            }
-        }
-        // write down weights
-        if (layer.ffn_down_exps) {
-            size_t n = dyn_ex_read_param(reader, de->pi_down, il, eid, cpu_buf.data(), de->down_expert_size);
-            if (n == de->down_expert_size) {
-                size_t off = (size_t)slot * de->down_expert_size;
-                ggml_backend_tensor_set(layer.ffn_down_exps, cpu_buf.data(), off, n);
-            }
-        }
+        auto write_expert = [&](ggml_tensor * t, int pi, size_t expert_size) {
+            if (!t || pi < 0 || !t->data) return;
+            size_t n = dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), expert_size);
+            if (n != expert_size) return;
+            size_t off = (size_t)slot * expert_size;
+#ifdef GGML_USE_CUDA
+            cudaMemcpy((char *)t->data + off, cpu_buf.data(), n, cudaMemcpyHostToDevice);
+#else
+            memcpy((char *)t->data + off, cpu_buf.data(), n);
+#endif
+        };
+
+        write_expert(layer.ffn_gate_exps, de->pi_gate, de->gate_expert_size);
+        write_expert(layer.ffn_up_exps, de->pi_up, de->up_expert_size);
+        write_expert(layer.ffn_gate_up_exps, de->pi_gate_up, de->gate_up_expert_size);
+        write_expert(layer.ffn_down_exps, de->pi_down, de->down_expert_size);
     }
 
     // write slot IDs (0,1,2,...) back to selected_experts for MUL_MAT_ID
@@ -153,7 +140,13 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     for (int i = 0; i < n_e; i++) {
         slots[i] = (i < n_slots) ? i : -1;
     }
-    ggml_backend_tensor_set(src, slots.data(), 0, n_e * sizeof(int32_t));
+    if (src->data) {
+#ifdef GGML_USE_CUDA
+        cudaMemcpy(src->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
+#else
+        memcpy(src->data, slots.data(), n_e * sizeof(int32_t));
+#endif
+    }
 
     return false;
 }

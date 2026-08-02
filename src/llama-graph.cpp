@@ -1360,6 +1360,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     samplers         (params.samplers),
     cb_func          (params.cb),
     res              (params.res),
+    dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
         res->set_params(params);
@@ -1970,6 +1971,15 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     //call early so that topk-moe can be used
     ggml_build_forward_expand(gf, weights);
+
+    // dyn-ex barrier: callback loads experts from .bin into virtualized tensors
+    if (dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
+        ggml_tensor * bar = (*dyn_ex_barrier)[il];
+        bar->op = GGML_OP_DYN_EX_BARRIER;
+        bar->src[0] = selected_experts;
+        ggml_build_forward_expand(gf, bar);
+        cb(bar, "ffn_moe_barrier", il);
+    }
 
     cur = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);
 
