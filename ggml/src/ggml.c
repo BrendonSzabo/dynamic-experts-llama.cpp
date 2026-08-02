@@ -1098,9 +1098,11 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+
+    "DYN_EX_BARRIER",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1215,7 +1217,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -7857,6 +7859,14 @@ void ggml_set_output(struct ggml_tensor * tensor) {
     for (struct ggml_tensor * cur = tensor; cur != NULL; cur = cur->view_src) {
         cur->flags |= GGML_TENSOR_FLAG_OUTPUT;
     }
+}
+
+struct ggml_tensor * ggml_dyn_ex_barrier_set(struct ggml_context * ctx) {
+    struct ggml_tensor * result = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, 2);
+    ggml_set_name(result, "dyn_ex_barrier");
+    ggml_set_output(result);
+    result->op = GGML_OP_DYN_EX_BARRIER;
+    return result;
 }
 
 void ggml_set_param(struct ggml_tensor * tensor) {

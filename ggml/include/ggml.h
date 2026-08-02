@@ -590,6 +590,8 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_DYN_EX_BARRIER,
+
         GGML_OP_COUNT,
     };
 
@@ -882,6 +884,8 @@ extern "C" {
     GGML_API void ggml_set_output(struct ggml_tensor * tensor);
     GGML_API void ggml_set_param(struct ggml_tensor * tensor);
     GGML_API void ggml_set_loss(struct ggml_tensor * tensor);
+
+    GGML_API struct ggml_tensor * ggml_dyn_ex_barrier_set(struct ggml_context * ctx);
 
     //
     // operations on tensors with backpropagation
