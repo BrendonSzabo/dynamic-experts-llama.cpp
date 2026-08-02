@@ -93,10 +93,60 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     int il = t->op_params[0];
     int n_e = (int)(src->ne[0] * src->ne[1]);
+    if (n_e <= 0) return false;
+
     std::vector<int32_t> ids(n_e);
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
 
-    model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
+    // load experts from .bin into the virtualized model tensors
+    auto & layer = model->layers[il];
+    auto * reader = de->reader;
+    int n_slots = de->n_slots;
+
+    size_t max_size = 0;
+    for (int pi = 0; pi < reader->n_params; pi++) {
+        size_t sz = dyn_ex_param_size(reader, pi);
+        if (sz > max_size) max_size = sz;
+    }
+    std::vector<uint8_t> cpu_buf(max_size);
+
+    for (int slot = 0; slot < n_e && slot < n_slots; slot++) {
+        int eid = ids[slot];
+        if (eid < 0 || eid >= reader->n_experts) continue;
+
+        // write gate weights
+        if (layer.ffn_gate_exps && de->pi_gate >= 0) {
+            size_t n = dyn_ex_read_param(reader, de->pi_gate, il, eid, cpu_buf.data(), de->gate_expert_size);
+            if (n == de->gate_expert_size) {
+                size_t off = (size_t)slot * de->gate_expert_size;
+                ggml_backend_tensor_set(layer.ffn_gate_exps, cpu_buf.data(), off, n);
+            }
+        }
+        // write up weights
+        if (layer.ffn_up_exps && de->pi_up >= 0) {
+            size_t n = dyn_ex_read_param(reader, de->pi_up, il, eid, cpu_buf.data(), de->up_expert_size);
+            if (n == de->up_expert_size) {
+                size_t off = (size_t)slot * de->up_expert_size;
+                ggml_backend_tensor_set(layer.ffn_up_exps, cpu_buf.data(), off, n);
+            }
+        }
+        // write gate_up weights (merged)
+        if (layer.ffn_gate_up_exps && de->pi_gate_up >= 0) {
+            size_t n = dyn_ex_read_param(reader, de->pi_gate_up, il, eid, cpu_buf.data(), de->gate_up_expert_size);
+            if (n == de->gate_up_expert_size) {
+                size_t off = (size_t)slot * de->gate_up_expert_size;
+                ggml_backend_tensor_set(layer.ffn_gate_up_exps, cpu_buf.data(), off, n);
+            }
+        }
+        // write down weights
+        if (layer.ffn_down_exps) {
+            size_t n = dyn_ex_read_param(reader, de->pi_down, il, eid, cpu_buf.data(), de->down_expert_size);
+            if (n == de->down_expert_size) {
+                size_t off = (size_t)slot * de->down_expert_size;
+                ggml_backend_tensor_set(layer.ffn_down_exps, cpu_buf.data(), off, n);
+            }
+        }
+    }
     return false;
 }
 
@@ -1350,7 +1400,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 
     // the new graph parameters
     // in order to correctly reuse a graph, it's full topology has to be uniquely determined by these parameters
-    const auto gparams = graph_params(res, ubatch, mctx, gtype);
+    auto gparams = graph_params(res, ubatch, mctx, gtype);
+    if (model.has_dyn_ex()) {
+        gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
+    }
 
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);

@@ -1,6 +1,7 @@
 #include "llama.h"
 
 #include "llama-impl.h"
+#include "llama-dyn-ex.h"
 
 #include "llama-chat.h"
 #include "llama-context.h"
@@ -358,6 +359,14 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
 
         if (!model->load_tensors(ml)) {
             return {-2, nullptr};
+        }
+
+        // dyn-ex: initialize slot cache
+        if (params.dyn_ex_n_slots > 0 && params.dyn_ex_path && params.dyn_ex_path[0]) {
+            if (!model->dyn_ex_init(params.dyn_ex_path, params.dyn_ex_n_slots)) {
+                LLAMA_LOG_ERROR("dyn-ex: failed to init cache\n");
+                return {-1, nullptr};
+            }
         }
 
         return {0, model_ptr.release()};

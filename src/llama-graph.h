@@ -711,6 +711,9 @@ struct llm_graph_params {
 
     llm_graph_result * res;
 
+    // dyn-ex: per-layer barrier tensors (nullptr = disabled)
+    std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
+
     // return true if the "other" params would result in a graph with the same topology as with the current params
     //   having the same topology allows us to reuse the graph in some cases
     bool allow_reuse(const llm_graph_params & other) const {

@@ -1073,6 +1073,18 @@ void llama_model::dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids,
     dyn_ex_cache_ensure_ordered(pimpl->dyn_ex, layer, expert_ids, n_ids);
 }
 
+bool llama_model::dyn_ex_init(const char * path, int n_slots) {
+    auto * reader = dyn_ex_reader_open(path);
+    if (!reader) return false;
+    pimpl->dyn_ex = dyn_ex_cache_init(reader, n_slots, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    if (!pimpl->dyn_ex) {
+        dyn_ex_reader_close(reader);
+        return false;
+    }
+    dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, nullptr, (int)hparams.n_layer(), (int)hparams.n_expert_used);
+    return true;
+}
+
 void llama_model_base::load_stats(llama_model_loader & ml) {
     pimpl->n_elements = ml.n_elements;
     pimpl->n_bytes = ml.n_bytes;

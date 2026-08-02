@@ -246,7 +246,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     ggml_tensor * /* expert_up */,
     ggml_tensor * expert_down) {
 
-    if (!reader || n_slots < 1 || !dev) return nullptr;
+    if (!reader || n_slots < 1) return nullptr;
 
     // validate n_slots is power of 2
     if ((n_slots & (n_slots - 1)) != 0) {
@@ -305,9 +305,9 @@ dyn_ex_cache * dyn_ex_cache_init(
 
     // slot_map buffer: [n_layers * n_expert] int32
     size_t slot_map_bytes = (size_t)n_layers * n_experts * sizeof(int32_t);
-    cache->buf_slot_map.reset(ggml_backend_buft_alloc_buffer(buft, slot_map_bytes));
-    if (!cache->buf_slot_map) { dyn_ex_cache_free(cache); return nullptr; }
-    {
+    cache->buf_slot_map.reset(buft ? ggml_backend_buft_alloc_buffer(buft, slot_map_bytes) : nullptr);
+    if (buft && !cache->buf_slot_map) { dyn_ex_cache_free(cache); return nullptr; }
+    if (buft) {
         std::vector<uint8_t> init_buf(slot_map_bytes, 0);
         raw_buf_write(cache->buf_slot_map.get(), 0, init_buf.data(), slot_map_bytes);
     }
@@ -318,26 +318,26 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->gate_up_stride = align_up(cache->gate_up_expert_size, 256);
     if (pi_gate_up >= 0) {
         size_t gate_up_buf_size = (size_t)n_layers * n_slots * cache->gate_up_stride;
-        cache->buf_gate_up.reset(ggml_backend_buft_alloc_buffer(buft, gate_up_buf_size));
-        if (!cache->buf_gate_up) { dyn_ex_cache_free(cache); return nullptr; }
-        ggml_backend_buffer_set_usage(cache->buf_gate_up.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        cache->buf_gate_up.reset(buft ? ggml_backend_buft_alloc_buffer(buft, gate_up_buf_size) : nullptr);
+        if (buft && !cache->buf_gate_up) { dyn_ex_cache_free(cache); return nullptr; }
+        if (buft) ggml_backend_buffer_set_usage(cache->buf_gate_up.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     }
     if (pi_gate >= 0 && pi_up >= 0) {
         cache->gate_stride = align_up(cache->gate_expert_size, 256);
         cache->up_stride   = align_up(cache->up_expert_size, 256);
         size_t gate_buf_size = (size_t)n_layers * n_slots * cache->gate_stride;
         size_t up_buf_size   = (size_t)n_layers * n_slots * cache->up_stride;
-        cache->buf_gate.reset(ggml_backend_buft_alloc_buffer(buft, gate_buf_size));
-        cache->buf_up.reset(ggml_backend_buft_alloc_buffer(buft, up_buf_size));
-        if (!cache->buf_gate || !cache->buf_up) { dyn_ex_cache_free(cache); return nullptr; }
+        cache->buf_gate.reset(buft ? ggml_backend_buft_alloc_buffer(buft, gate_buf_size) : nullptr);
+        cache->buf_up.reset(buft ? ggml_backend_buft_alloc_buffer(buft, up_buf_size) : nullptr);
+        if (buft && (!cache->buf_gate || !cache->buf_up)) { dyn_ex_cache_free(cache); return nullptr; }
     }
 
     // down slot buffer
     cache->down_stride = align_up(cache->down_expert_size, 256);
     {
         size_t down_buf_size = (size_t)n_layers * n_slots * cache->down_stride;
-        cache->buf_down.reset(ggml_backend_buft_alloc_buffer(buft, down_buf_size));
-        if (!cache->buf_down) { dyn_ex_cache_free(cache); return nullptr; }
+        cache->buf_down.reset(buft ? ggml_backend_buft_alloc_buffer(buft, down_buf_size) : nullptr);
+        if (buft && !cache->buf_down) { dyn_ex_cache_free(cache); return nullptr; }
     }
 
     cache->t_gate_up.resize(n_layers, nullptr);
