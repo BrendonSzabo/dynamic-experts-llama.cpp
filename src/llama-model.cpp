@@ -1084,33 +1084,26 @@ bool llama_model::dyn_ex_init(const char * path, int n_slots, ggml_backend_dev_t
 
     if (gpu_dev) {
         auto buft = ggml_backend_dev_buffer_type(gpu_dev);
-        auto make_gpu = [&](ggml_tensor * cpu_t, ggml_tensor *& slot) {
-            if (!cpu_t) return;
-            size_t sz = ggml_nbytes(cpu_t);
-            ggml_backend_buffer_ptr buf(ggml_backend_buft_alloc_buffer(buft, sz));
-            if (!buf) return;
-            ggml_tensor * t = new ggml_tensor();
-            memset(t, 0, sizeof(ggml_tensor));
-            t->type   = cpu_t->type;
-            t->ne[0]  = cpu_t->ne[0];
-            t->ne[1]  = cpu_t->ne[1];
-            t->ne[2]  = cpu_t->ne[2];
-            t->ne[3]  = 1;
-            t->nb[0]  = cpu_t->nb[0];
-            t->nb[1]  = cpu_t->nb[1];
-            t->nb[2]  = cpu_t->nb[2];
-            t->nb[3]  = t->nb[2] * t->ne[2];
-            t->flags  = GGML_TENSOR_FLAG_EXTERNAL;
-            t->buffer = buf.release();
-            t->data   = ggml_backend_buffer_get_base(t->buffer);
-            slot = t;
-        };
+        // create a ggml context for GPU slot tensors (flash-moe approach)
+        size_t ctx_size = ggml_tensor_overhead() * (size_t)layers.size() * 4 + 1024;
+        ggml_init_params ctx_params = { ctx_size, nullptr, true };
+        ggml_context * slot_ctx = ggml_init(ctx_params);
         for (int il = 0; il < (int)layers.size(); il++) {
             auto & L = layers[il];
-            make_gpu(L.ffn_gate_exps,    L.ffn_gate_exps);
-            make_gpu(L.ffn_up_exps,      L.ffn_up_exps);
-            make_gpu(L.ffn_down_exps,    L.ffn_down_exps);
-            make_gpu(L.ffn_gate_up_exps, L.ffn_gate_up_exps);
+            auto make_gpu = [&](ggml_tensor * cpu_t) -> ggml_tensor * {
+                if (!cpu_t) return nullptr;
+                ggml_tensor * t = ggml_dup_tensor(slot_ctx, cpu_t);
+                size_t sz = ggml_nbytes(t);
+                ggml_backend_buffer_ptr buf(ggml_backend_buft_alloc_buffer(buft, sz));
+                if (!buf) return nullptr;
+                ggml_backend_tensor_alloc(buf.get(), t, ggml_backend_buffer_get_base(buf.get()));
+                buf.release(); // tensor holds reference via buffer pointer
+                return t;
+            };
+            if (L.ffn_gate_exps)     L.ffn_gate_exps    = make_gpu(L.ffn_gate_exps);
+            if (L.ffn_up_exps)       L.ffn_up_exps      = make_gpu(L.ffn_up_exps);
+            if (L.ffn_down_exps)     L.ffn_down_exps    = make_gpu(L.ffn_down_exps);
+            if (L.ffn_gate_up_exps)  L.ffn_gate_up_exps = make_gpu(L.ffn_gate_up_exps);
         }
     }
 
