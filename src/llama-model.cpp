@@ -3,6 +3,7 @@
 #include "llama-arch.h"
 #include "llama-ext.h"
 #include "llama-hparams.h"
+#include "llama-dyn-ex.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-cparams.h"
@@ -1037,6 +1038,8 @@ struct llama_model::impl {
     bool has_tensor_overrides;
 
     std::vector<float> tensor_split_owned;
+
+    struct dyn_ex_cache * dyn_ex = nullptr;
 };
 
 llama_model::llama_model(const llama_model_params & params) : params(params), pimpl(std::make_unique<impl>()) {
@@ -1053,6 +1056,21 @@ llama_model::~llama_model() {
     for (auto * lora : loras) {
         delete lora;
     }
+    if (pimpl->dyn_ex) {
+        dyn_ex_cache_free(pimpl->dyn_ex);
+    }
+}
+
+bool llama_model::has_dyn_ex() const {
+    return pimpl->dyn_ex != nullptr;
+}
+
+dyn_ex_cache * llama_model::dyn_ex_get_cache() const {
+    return pimpl->dyn_ex;
+}
+
+void llama_model::dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids, int n_ids) const {
+    dyn_ex_cache_ensure_ordered(pimpl->dyn_ex, layer, expert_ids, n_ids);
 }
 
 void llama_model_base::load_stats(llama_model_loader & ml) {

@@ -696,6 +696,10 @@ struct llama_model {
     virtual void load_arch_tensors(llama_model_loader & ml) = 0;
     virtual std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const = 0;
 
+    bool has_dyn_ex() const;
+    struct dyn_ex_cache * dyn_ex_get_cache() const;
+    void dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids, int n_ids) const;
+
 protected:
     llama_model_params params;
 

@@ -9,6 +9,7 @@
 #include "llama-memory.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
+#include "llama-dyn-ex.h"
 #include "llama-ext.h"
 #include "llama.h"
 
@@ -78,6 +79,26 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
     /*.name             =*/ "fused DeepSeek V4 HC post",
     /*.n_tokens_per_seq =*/ 1,
 };
+
+static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
+    if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
+    if (!pre) return true;
+
+    auto * model = (const llama_model *)user_data;
+    auto * de = model->dyn_ex_get_cache();
+    if (!de) return true;
+
+    ggml_tensor * src = t->src[0];
+    if (!src || !src->data) return false;
+
+    int il = t->op_params[0];
+    int n_e = (int)(src->ne[0] * src->ne[1]);
+    std::vector<int32_t> ids(n_e);
+    ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
+
+    model->dyn_ex_ensure_layer_ordered(il, ids.data(), n_e);
+    return false;
+}
 
 llama_context::llama_context(
         const llama_model & model,
@@ -1346,7 +1367,11 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-        ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+        if (model.has_dyn_ex()) {
+            ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
+        } else {
+            ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+        }
 
         //const auto t_start_us = ggml_time_us();
 
