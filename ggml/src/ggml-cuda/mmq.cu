@@ -181,20 +181,13 @@ void ggml_cuda_mul_mat_q(
     const int64_t ne_get_rows = ne12 * n_expert_used;
     GGML_ASSERT(ne1 == n_expert_used);
 
-    fprintf(stderr, "dyn-ex mmq MoE: ne00=%lld ne01=%lld ne02=%lld ne10=%lld ne11=%lld ne12=%lld ne_get_rows=%lld\n",
-        (long long)ne00, (long long)ne01, (long long)ne02,
-        (long long)ne10, (long long)ne11, (long long)ne12,
-        (long long)ne_get_rows);
-    fprintf(stderr, "dyn-ex mmq MoE: nb00=%zu nb02=%zu s02=%lld src0_data=%p\n",
-        nb00, nb02, (long long)(nb02 / ts_src0), src0_d);
-
     ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 1);
 
     // gate/up activations are broadcast across experts (ne11 == 1): quantize each token once and
     // scatter to its slots. ids_src1 then holds the inverse map (token slot -> compact row).
-    const bool dedup_bcast = false;
+    const bool dedup_bcast = ne11 == 1 && n_expert_used > 1;
 
     {
         GGML_ASSERT(ids->nb[0] == ggml_element_size(ids));
@@ -203,23 +196,6 @@ void ggml_cuda_mul_mat_q(
 
         ggml_cuda_launch_mm_ids_helper((const int32_t *) ids->data, ids_src1.get(), ids_dst.get(), expert_bounds.get(),
             ne02, ne12, n_expert_used, ne11, si1, sis1, /*write_inverse =*/ dedup_bcast, stream);
-        {
-            std::vector<int32_t> bounds((size_t)ne02 + 1);
-            cudaMemcpy(bounds.data(), expert_bounds.get(), ((size_t)ne02 + 1) * 4, cudaMemcpyDeviceToHost);
-            fprintf(stderr, "dyn-ex mmq bounds: ne02=%lld total=%d :", (long long)ne02, bounds[(int)ne02]);
-            for (int i = 0; i < (int)ne02 && i < 16; i++) fprintf(stderr, " %d", bounds[i]);
-            fprintf(stderr, "\n");
-        }
-        {
-            std::vector<int32_t> tmp(8);
-            cudaMemcpy(tmp.data(), ids->data, 32, cudaMemcpyDeviceToHost);
-            fprintf(stderr, "dyn-ex mmq helper input ids=[%d,%d,%d,%d,%d,%d,%d,%d] dedup=%d\n",
-                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7], dedup_bcast);
-            cudaMemcpy(tmp.data(), ids_src1.get(), 32, cudaMemcpyDeviceToHost);
-            fprintf(stderr, "dyn-ex mmq helper src1_out=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
-                tmp[0],tmp[1],tmp[2],tmp[3],tmp[4],tmp[5],tmp[6],tmp[7]);
-            fflush(stderr);
-        }
         CUDA_CHECK(cudaGetLastError());
     }
 
@@ -251,28 +227,9 @@ void ggml_cuda_mul_mat_q(
                                         ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
             }
         } else if (dedup_bcast) {
-            // read original ids from GPU to see what the remap produced
-            {
-                std::vector<int32_t> id_vals(std::min(ne_get_rows, (int64_t)8));
-                if (ids->data) cudaMemcpy(id_vals.data(), ids->data, id_vals.size()*4, cudaMemcpyDeviceToHost);
-                fprintf(stderr, "dyn-ex mmq scatter: ids->data=%p vals=[%d,%d,%d,%d,%d,%d,%d,%d]\n",
-                    (void*)ids->data, id_vals[0],id_vals[1],id_vals[2],id_vals[3],id_vals[4],id_vals[5],id_vals[6],id_vals[7]);
-            }
-            fprintf(stderr, "dyn-ex mmq scatter: ids_src1=%p ne_get_rows=%lld\n",
-                (void*)ids_src1.get(), (long long)ne_get_rows);
-            // check first few ids values
-            {
-                std::vector<int32_t> tmp((size_t)std::min(ne_get_rows, (int64_t)8));
-                CUDA_CHECK(cudaMemcpy(tmp.data(), ids_src1.get(), tmp.size()*4, cudaMemcpyDeviceToHost));
-                fprintf(stderr, "dyn-ex mmq scatter ids[0..7]=");
-                for (size_t j = 0; j < tmp.size(); j++) fprintf(stderr, "%d ", tmp[j]);
-                fprintf(stderr, "\n");
-            }
             quantize_scatter_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10,
                                     /*stride_token=*/s12, ne10_padded, ne12, ne11_flat, n_expert_used, stream);
         } else {
-            fprintf(stderr, "dyn-ex mmq quantize: ids->data=%p ids_src1=%p ne_get_rows=%lld\n",
-                (void*)ids->data, (void*)ids_src1.get(), (long long)ne_get_rows);
             quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         }
@@ -338,8 +295,6 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
     if (!mmq_supported) {
         return false;
     }
-
-    if (n_experts > 0 && n_experts < 128) return false;
 
     // MMQ tiles require at least 48 KiB per-block shared memory; fall back to BLAS otherwise.
     {

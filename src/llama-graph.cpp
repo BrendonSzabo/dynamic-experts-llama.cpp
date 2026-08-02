@@ -2040,6 +2040,11 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     ggml_tensor * up = nullptr;
     ggml_tensor * experts = nullptr;
 
+    if (!gate_up_exps && !up_exps && !gate_exps && !down_exps) {
+        cb(cur, "ffn_moe_out", il);
+        return cur;
+    }
+
     if (gate_up_exps) {
         // merged gate_up path: one mul_mat_id, then split into gate and up views
         ggml_tensor * gate_up = build_lora_mm_id(gate_up_exps, cur, selected_experts_slots, up_exps_s); // [n_ff*2, n_expert_used, n_tokens]

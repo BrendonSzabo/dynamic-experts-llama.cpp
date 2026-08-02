@@ -579,9 +579,6 @@ void quantize_mmq_q8_1_cuda(
     GGML_ASSERT(ne00 % 4 == 0);
     GGML_ASSERT(ne0 % QK8_1_MMQ == 0);
 
-    // if(0) fprintf(stderr, "dyn-ex quantize mmq: x=%p ne0=%lld ne1=%lld ne2=%lld ne00=%lld ids=%p\n",
-    //     (void*)x, (long long)ne0, (long long)ne1, (long long)ne2, (long long)ne00, (void*)ids);
-
     // ne1 tends to assume the highest values, therefore use it as the "x" dimension of the CUDA grid:
     const int64_t block_num_y = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
     const dim3 num_blocks(ne1, block_num_y, ne2*ne3);
@@ -615,9 +612,6 @@ void quantize_scatter_mmq_q8_1_cuda(
 
     const int64_t block_num_y = (ne0 + 4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ - 1) / (4*CUDA_QUANTIZE_BLOCK_SIZE_MMQ);
     const dim3 num_blocks(n_tokens, block_num_y, 1);
-    fprintf(stderr, "dyn-ex scatter quant: n_tokens=%lld block_y=%lld ne0=%lld n_expert_used=%d nrows=%lld\n",
-        (long long)n_tokens, (long long)block_num_y, (long long)ne0, n_expert_used, (long long)nrows_dst);
-    fflush(stderr);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE_MMQ, 1, 1);
     switch (mmq_get_q8_1_ds_layout(type_src0)) {
         case MMQ_Q8_1_DS_LAYOUT_D4:

@@ -497,8 +497,9 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_ffn(ggml_tensor * cur, c
     // Check if this is an MoE layer
     GGML_ASSERT(model.layers[il].ffn_gate_inp != nullptr);
 
-    ggml_tensor * moe_out =
-        build_moe_ffn(cur,
+    ggml_tensor * moe_out = cur;
+    if (model.layers[il].ffn_up_exps || model.layers[il].ffn_gate_exps || model.layers[il].ffn_down_exps || model.layers[il].ffn_gate_up_exps) {
+        moe_out = build_moe_ffn(cur,
             model.layers[il].ffn_gate_inp,
             model.layers[il].ffn_up_exps,
             model.layers[il].ffn_gate_exps,
@@ -516,6 +517,7 @@ ggml_tensor * llama_model_qwen35moe::graph::build_layer_ffn(ggml_tensor * cur, c
     if(0) fprintf(stderr, "dyn-ex moe out L%d: cur ne=[%lld,%lld,%lld]\n", il, 
         (long long)cur->ne[0], (long long)cur->ne[1], (long long)cur->ne[2]);
     cb(moe_out, "ffn_moe_out", il);
+    }
 
     // Add shared experts if present - following Qwen3Next reference implementation
     if (model.layers[il].ffn_up_shexp != nullptr) {

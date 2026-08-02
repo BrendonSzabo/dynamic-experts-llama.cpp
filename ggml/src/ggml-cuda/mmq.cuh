@@ -1370,50 +1370,32 @@ static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const i
     return nbs_ids + nbs_x + GGML_PAD(nbs_y, config.nthreads*sizeof(int));
 }
 
-template<ggml_type type, int J, bool fallback>
+template <ggml_type type, int J, bool fallback>
 static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
-    if(0) fprintf(stderr, "[launch_mul_mat_q] entry type=%d J=%d fallback=%d\n", (int)type, J, (int)fallback);
-
     const int id = ggml_cuda_get_device();
     const int cc = ggml_cuda_info().devices[id].cc;
     const int nsm = ggml_cuda_info().devices[id].nsm;
     const int warp_size = ggml_cuda_info().devices[id].warp_size;
-    if(0) fprintf(stderr, "  device id=%d, cc=%d, nsm=%d, warp_size=%d\n", id, cc, nsm, warp_size);
 
     const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, fallback, cc);
-    if(0) fprintf(stderr, "  config: nthreads=%d, I=%d, J=%d\n", config.nthreads, config.I, config.J);
-
-    if(0) fprintf(stderr, "  checking nthreads %% warp_size == 0...\n");
     GGML_ASSERT(config.nthreads % warp_size == 0);
-    if(0) fprintf(stderr, "  passed\n");
-
     const int nwarps = config.nthreads / warp_size;
     const int nbytes_shared = mmq_get_nbytes_shared(config, cc);
-    if(0) fprintf(stderr, "  nwarps=%d, nbytes_shared=%d\n", nwarps, nbytes_shared);
 
     const dim3 block_dims(warp_size, nwarps, 1);
-    if(0) fprintf(stderr, "  block_dims=(%u,%u,%u)\n", block_dims.x, block_dims.y, block_dims.z);
 
     CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, J, false>), nbytes_shared);
     CUDA_SET_SHARED_MEMORY_LIMIT((mul_mat_q<type, J,  true>), nbytes_shared);
-    if(0) fprintf(stderr, "  shared memory limits set\n");
 
     const int nty  = (args.nrows_x   + config.I - 1) / config.I;
     const int ntx  = (args.ncols_max + config.J - 1) / config.J;
     const int ntzw = args.nchannels_y * args.nsamples_y;
     const dim3 block_nums_xy_tiling(nty, ntx, ntzw);
-    if(0) fprintf(stderr, "  tiling grid: nty=%d ntx=%d ntzw=%d -> (%u,%u,%u)\n",
-            nty, ntx, ntzw, block_nums_xy_tiling.x, block_nums_xy_tiling.y, block_nums_xy_tiling.z);
 
-    if(0) fprintf(stderr, "  checking channel_ratio...\n");
     GGML_ASSERT(args.nchannels_y % args.nchannels_x == 0);
-    if(0) fprintf(stderr, "  checking sample_ratio...\n");
     GGML_ASSERT(args.nsamples_y  % args.nsamples_x  == 0);
-    if(0) fprintf(stderr, "  passed\n");
-
     const int channel_ratio = args.nchannels_y / args.nchannels_x;
     const int sample_ratio  = args.nsamples_y  / args.nsamples_x;
-    if(0) fprintf(stderr, "  channel_ratio=%d, sample_ratio=%d\n", channel_ratio, sample_ratio);
 
     const uint3 blocks_per_ne00_fd = init_fastdiv_values(args.ncols_x / ggml_cuda_type_traits<type>::qk);
     const uint3 ntx_fd             = init_fastdiv_values(ntx);
@@ -1423,53 +1405,35 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
 
     if (!ggml_cuda_mmq_get_stream_k(type, J, fallback, cc)) {
-        if(0) fprintf(stderr, "  non-stream-k path, launching tiling kernel...\n");
-        fprintf(stderr, "dyn-ex mmq launch: type=%d fb=%d J=%d nrows=%d ncols=%d nchan=%d grid=(%d,%d,%d) block=(%d,%d,%d) ids_dst=%p x=%p\n",
-            (int)type, (int)fallback, (int)J, args.nrows_x, args.ncols_dst, nchannels_y_fd,
-            block_nums_xy_tiling.x,block_nums_xy_tiling.y,block_nums_xy_tiling.z,
-            block_dims.x,block_dims.y,block_dims.z, (void*)args.ids_dst, (void*)args.x);
-        fflush(stderr);
         mul_mat_q<type, J, fallback><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr, args.y_scale,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
              ntx_fd);
-        { cudaError_t e = cudaGetLastError(); fprintf(stderr, "dyn-ex mmq tiling cudaErr: %s\n", e == cudaSuccess ? "ok" : cudaGetErrorString(e)); }
-        fprintf(stderr, "[launch_mul_mat_q] exit (tiling)\n");
         return;
     }
 
-    if(0) fprintf(stderr, "  stream-k path selected\n");
     // For the stream-k kernel it is possible to run it with tiling by setting the number of CUDA blocks equal to the number of tiles.
     // This is worthwhile if the efficiency of tiling is high and skipping the fixup kernel is more important.
     const int ntiles_dst = ntx * nty * ntzw;
     const int tiles_nwaves = (ntiles_dst + nsm - 1) / nsm;
     const int tiles_efficiency_percent = 100 * ntiles_dst / (nsm*tiles_nwaves);
-    if(0) fprintf(stderr, "  ntiles_dst=%d, tiles_nwaves=%d, efficiency=%d%%\n", ntiles_dst, tiles_nwaves, tiles_efficiency_percent);
-
     const dim3 block_nums_stream_k(GGML_CUDA_CC_IS_NVIDIA(cc) && tiles_efficiency_percent >= 90 ? ntiles_dst : nsm, 1, 1);
-    if(0) fprintf(stderr, "  block_nums_stream_k=(%u,1,1)\n", block_nums_stream_k.x);
 
-    if(0) fprintf(stderr, "  checking ntiles_dst * blocks_per_ne00_fd.z < (1<<30)...\n");
     GGML_ASSERT(ntiles_dst * blocks_per_ne00_fd.z < (1 << 30)); // Assert that variable kbc will not overflow.
-    if(0) fprintf(stderr, "  passed\n");
 
     const bool fixup_needed = ntiles_dst % block_nums_stream_k.x != 0;
-    if(0) fprintf(stderr, "  fixup_needed=%d\n", fixup_needed);
 
     ggml_cuda_pool & pool = ctx.pool(id);
     ggml_cuda_pool_alloc<float> tmp_fixup(pool);
     if (fixup_needed) {
         tmp_fixup.alloc(block_nums_stream_k.x * config.J*config.I);
-        if(0) fprintf(stderr, "  allocated tmp_fixup (%zu bytes)\n",
-                (size_t)(block_nums_stream_k.x * config.J * config.I) * sizeof(float));
     }
 
     const dim3 block_nums_fixup(block_nums_stream_k.x, config.I/warp_size, 1);
     const dim3 block_dims_fixup(block_dims.x, block_dims.y/2, block_dims.z);
 
-    if(0) fprintf(stderr, "  launching stream-k main kernel...\n");
     mul_mat_q<type, J, fallback><<<block_nums_stream_k, block_dims, nbytes_shared, stream>>>
         (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, args.y_scale,
          blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
@@ -1478,87 +1442,102 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
          ntx_fd);
 
     if (!fixup_needed) {
-        if(0) fprintf(stderr, "[launch_mul_mat_q] exit (stream-k no fixup)\n");
         return;
     }
 
-    if(0) fprintf(stderr, "  launching fixup kernel...\n");
     CUDA_CHECK(cudaGetLastError());
     mul_mat_q_stream_k_fixup<type, J, fallback><<<block_nums_fixup, block_dims_fixup, 0, stream>>>
         (args.ids_dst, args.expert_bounds, args.dst, tmp_fixup.ptr, blocks_per_ne00_fd, args.nrows_x, args.ncols_dst,
          args.nrows_dst, nchannels_y_fd, args.stride_channel_dst, nsamples_y_fd, args.stride_sample_dst,
          ntx_fd);
-    if(0) fprintf(stderr, "[launch_mul_mat_q] exit (stream-k with fixup)\n");
 }
 
-template<ggml_type type, bool fallback>
+template <ggml_type type, bool fallback>
 void mul_mat_q_switch_J(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     const int    id    = ggml_cuda_get_device();
     const int    cc    = ggml_cuda_info().devices[id].cc;
     const size_t smpbo = ggml_cuda_info().devices[id].smpbo;
 
-    if(0) fprintf(stderr, "[mul_mat_q_switch_J] entry type=%d fallback=%d id=%d cc=%d smpbo=%zu ncols_max=%lld\n",
-            (int)type, (int)fallback, id, cc, smpbo, (long long)args.ncols_max);
-
     int J_best        = 0;
     int ntiles_J_best = INT_MAX;
 
     for (int J = 8; J <= 128 && ntiles_J_best > 1; J += 8) {
-        if(0) fprintf(stderr, "  trying J=%d\n", J);
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, fallback, cc);
         if (config.type == GGML_TYPE_COUNT) {
-            if(0) fprintf(stderr, "    config type COUNT, skip\n");
             continue;
         }
 
-        const size_t shared_mem = mmq_get_nbytes_shared(config, cc);
-        if(0) fprintf(stderr, "    shared_mem=%zu smpbo=%zu\n", shared_mem, smpbo);
-        if (shared_mem > smpbo) {
-            if(0) fprintf(stderr, "    exceeds smpbo, skip\n");
+        if (mmq_get_nbytes_shared(config, cc) > smpbo) {
             continue;
         }
 
         const int ntiles_x = (args.ncols_max + config.J - 1) / config.J;
-        if(0) fprintf(stderr, "    ntiles_x=%d best=%d\n", ntiles_x, ntiles_J_best);
 
         if (ntiles_x < ntiles_J_best) {
             J_best = J;
             ntiles_J_best = ntiles_x;
-            if(0) fprintf(stderr, "    new best J=%d ntiles=%d\n", J_best, ntiles_J_best);
         }
     }
 
-    if(0) fprintf(stderr, "  search done J_best=%d ntiles_J_best=%d\n", J_best, ntiles_J_best);
-
     switch (J_best) {
-        case   8: if(0) fprintf(stderr, "  launch J=8\n");  launch_mul_mat_q<type,   8, fallback>(ctx, args, stream); break;
-        case  16: if(0) fprintf(stderr, "  launch J=16\n"); launch_mul_mat_q<type,  16, fallback>(ctx, args, stream); break;
-        case  24: if(0) fprintf(stderr, "  launch J=24\n"); launch_mul_mat_q<type,  24, fallback>(ctx, args, stream); break;
-        case  32: if(0) fprintf(stderr, "  launch J=32\n"); launch_mul_mat_q<type,  32, fallback>(ctx, args, stream); break;
-        case  40: if(0) fprintf(stderr, "  launch J=40\n"); launch_mul_mat_q<type,  40, fallback>(ctx, args, stream); break;
-        case  48: if(0) fprintf(stderr, "  launch J=48\n"); launch_mul_mat_q<type,  48, fallback>(ctx, args, stream); break;
-        case  56: if(0) fprintf(stderr, "  launch J=56\n"); launch_mul_mat_q<type,  56, fallback>(ctx, args, stream); break;
-        case  64: if(0) fprintf(stderr, "  launch J=64\n"); launch_mul_mat_q<type,  64, fallback>(ctx, args, stream); break;
-        case  72: if(0) fprintf(stderr, "  launch J=72\n"); launch_mul_mat_q<type,  72, fallback>(ctx, args, stream); break;
-        case  80: if(0) fprintf(stderr, "  launch J=80\n"); launch_mul_mat_q<type,  80, fallback>(ctx, args, stream); break;
-        case  88: if(0) fprintf(stderr, "  launch J=88\n"); launch_mul_mat_q<type,  88, fallback>(ctx, args, stream); break;
-        case  96: if(0) fprintf(stderr, "  launch J=96\n"); launch_mul_mat_q<type,  96, fallback>(ctx, args, stream); break;
-        case 104: if(0) fprintf(stderr, "  launch J=104\n"); launch_mul_mat_q<type, 104, fallback>(ctx, args, stream); break;
-        case 112: if(0) fprintf(stderr, "  launch J=112\n"); launch_mul_mat_q<type, 112, fallback>(ctx, args, stream); break;
-        case 120: if(0) fprintf(stderr, "  launch J=120\n"); launch_mul_mat_q<type, 120, fallback>(ctx, args, stream); break;
-        case 128: if(0) fprintf(stderr, "  launch J=128\n"); launch_mul_mat_q<type, 128, fallback>(ctx, args, stream); break;
+        case   8:
+            launch_mul_mat_q<type,   8, fallback>(ctx, args, stream);
+            break;
+        case  16:
+            launch_mul_mat_q<type,  16, fallback>(ctx, args, stream);
+            break;
+        case  24:
+            launch_mul_mat_q<type,  24, fallback>(ctx, args, stream);
+            break;
+        case  32:
+            launch_mul_mat_q<type,  32, fallback>(ctx, args, stream);
+            break;
+        case  40:
+            launch_mul_mat_q<type,  40, fallback>(ctx, args, stream);
+            break;
+        case  48:
+            launch_mul_mat_q<type,  48, fallback>(ctx, args, stream);
+            break;
+        case  56:
+            launch_mul_mat_q<type,  56, fallback>(ctx, args, stream);
+            break;
+        case  64:
+            launch_mul_mat_q<type,  64, fallback>(ctx, args, stream);
+            break;
+        case  72:
+            launch_mul_mat_q<type,  72, fallback>(ctx, args, stream);
+            break;
+        case  80:
+            launch_mul_mat_q<type,  80, fallback>(ctx, args, stream);
+            break;
+        case  88:
+            launch_mul_mat_q<type,  88, fallback>(ctx, args, stream);
+            break;
+        case  96:
+            launch_mul_mat_q<type,  96, fallback>(ctx, args, stream);
+            break;
+        case 104:
+            launch_mul_mat_q<type, 104, fallback>(ctx, args, stream);
+            break;
+        case 112:
+            launch_mul_mat_q<type, 112, fallback>(ctx, args, stream);
+            break;
+        case 120:
+            launch_mul_mat_q<type, 120, fallback>(ctx, args, stream);
+            break;
+        case 128:
+            launch_mul_mat_q<type, 128, fallback>(ctx, args, stream);
+            break;
         default:
-            if(0) fprintf(stderr, "J_best=%d no valid J found, aborting\n", J_best);
+            fprintf(stderr, "J_best=%d\n", J_best);
             GGML_ABORT("fatal error");
             break;
     }
-    if(0) fprintf(stderr, "[mul_mat_q_switch_J] exit\n");
 }
 
 template <ggml_type type>
 void mul_mat_q_case(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     if (args.nrows_x % 128 == 0) {
-        if(0) fprintf(stderr, "top");
         constexpr bool fallback = false;
         mul_mat_q_switch_J<type, fallback>(ctx, args, stream);
     } else {

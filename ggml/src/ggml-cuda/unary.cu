@@ -260,58 +260,20 @@ void ggml_cuda_op_softplus(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 /* gated ops */
 
 template <float (*op)(float), typename T>
-static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst,
-                                             const int64_t k, const int64_t n,
-                                             const int64_t o0, const int64_t o1) {
-    // Log entry per thread (only first few threads to avoid flood - adjust if needed)
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("[unary_gated_op_kernel] entry: k=%lld, n=%lld, o0=%lld, o1=%lld\n",
-               (long long)k, (long long)n, (long long)o0, (long long)o1);
-    }
-
+static __global__ void unary_gated_op_kernel(const T * x, const T * g, T * dst, const int64_t k, const int64_t n, const int64_t o0, const int64_t o1) {
     ggml_cuda_pdl_lc();
     const int64_t i = int64_t(blockDim.x)*blockIdx.x + threadIdx.x;
 
     if (i >= k) {
-        // Log early return
-        if (i == k) { // only log once at the boundary thread, optional
-            printf("[unary_gated_op_kernel] thread %lld reached i>=k, returning (i==%lld, k==%lld)\n",
-                   (long long)i, (long long)i, (long long)k);
-        }
         return;
     }
 
-    // Log thread active (selective to avoid spam: first thread per block or a few)
-    if (threadIdx.x == 0 && blockIdx.x < 4) {
-        printf("[unary_gated_op_kernel] block %d, thread %lld active, i=%lld\n",
-               blockIdx.x, (long long)threadIdx.x, (long long)i);
-    }
-
     // perform base op and multiply with gate (either offset in same tensor or a separate one)
-    const int64_t j0 = i;
-    const int64_t j1 = o0 == o1 ? i : (i / n) * o1 + (i % n);
-
-    // Log indices and gate condition
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        printf("[unary_gated_op_kernel] i=%lld: j0=%lld, j1=%lld, same offsets=%d\n",
-               (long long)i, (long long)j0, (long long)j1, (o0 == o1));
-    }
-    // print addresses at midpoint
-    if (threadIdx.x == 0 && blockIdx.x == 192) {
-        printf("[unary_gated_op_kernel] block 192: x[%lld]=%p g[%lld]=%p x=%p g=%p\n",
-               (long long)j0, (void*)&x[j0], (long long)j1, (void*)&g[j1], (void*)x, (void*)g);
-    }
+    const int64_t j0 = (i / n) * o0 + (i % n);
+    const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
 
     ggml_cuda_pdl_sync();
-    float x_val = (float)x[j0];
-    float g_val = (float)g[j1];
-    dst[i] = (T)(op(x_val) * g_val);
-
-    // Optional: log result for first element
-    if (i == 0) {
-        printf("[unary_gated_op_kernel] i=0: x=%f, g=%f, dst=%f\n",
-               (double)x_val, (double)g_val, (double)dst[i]);
-    }
+    dst[i] = (T)(op((float)x[j0]) * (float)g[j1]);
 }
 
 template <float (*op)(float), typename T>
@@ -323,8 +285,6 @@ static void unary_gated_cuda(const T * x, const T * g, T * dst, const int64_t k,
 
 template <float (*op)(float)>
 void ggml_cuda_op_unary_gated(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    if(0) fprintf(stderr, "[ggml_cuda_op_unary_gated] entry\n");
-
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
     void * src0_d = src0->data;
@@ -335,104 +295,46 @@ void ggml_cuda_op_unary_gated(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     const int64_t nc = src1 ? src0->ne[0] : src0->ne[0] / 2;
     cudaStream_t stream = ctx.stream();
 
-    if(0) fprintf(stderr, "  nc = %ld, src1 present = %s\n", (long)nc, src1 ? "yes" : "no");
-
-    // Check src0 contiguous
-    if(0) fprintf(stderr, "  checking ggml_is_contiguous_1(src0)...\n");
     GGML_ASSERT(ggml_is_contiguous_1(src0));
-    if(0) fprintf(stderr, "  src0 is contiguous passed.\n");
-
-    // Check element size
-    if(0) fprintf(stderr, "  checking src0->nb[0] == element_size...\n");
     GGML_ASSERT(src0->nb[0] == ggml_element_size(src0));
-    if(0) fprintf(stderr, "  src0 element size passed.\n");
-
-    // Check dst contiguous
-    if(0) fprintf(stderr, "  checking ggml_is_contiguous(dst)...\n");
     GGML_ASSERT(ggml_is_contiguous(dst));
-    if(0) fprintf(stderr, "  dst contiguous passed.\n");
 
-    // Type assertions
-    if(0) fprintf(stderr, "  checking src0/dst types...\n");
     GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
     GGML_ASSERT( dst->type == GGML_TYPE_F32 ||  dst->type == GGML_TYPE_F16);
     GGML_ASSERT(src0->type == dst->type);
-    if(0) fprintf(stderr, "  types ok (src0:%d, dst:%d)\n", src0->type, dst->type);
-
-    if(0) fprintf(stderr, "  checking dst->ne[0] == nc...\n");
     GGML_ASSERT(dst->ne[0] == nc);
-    if(0) fprintf(stderr, "  ne[0] ok\n");
-
-    if(0) fprintf(stderr, "  checking nrows...\n");
     GGML_ASSERT(ggml_nrows(dst) == ggml_nrows(src0));
-    if(0) fprintf(stderr, "  nrows ok\n");
 
-    // If src1 present, extra checks
     if (src1) {
-        if(0) fprintf(stderr, "  src1 branch: extra checks\n");
-        if(0) fprintf(stderr, "    checking src1 contiguous...\n");
         GGML_ASSERT(ggml_is_contiguous_1(src1));
-        if(0) fprintf(stderr, "    src1 contiguous passed.\n");
-
-        if(0) fprintf(stderr, "    checking src1->nb[0] == element_size...\n");
         GGML_ASSERT(src1->nb[0] == ggml_element_size(src1));
-        if(0) fprintf(stderr, "    src1 element size passed.\n");
-
-        if(0) fprintf(stderr, "    checking src1->ne[0] == nc...\n");
         GGML_ASSERT(src1->ne[0] == nc);
-        if(0) fprintf(stderr, "    src1 ne[0] ok\n");
-
-        if(0) fprintf(stderr, "    checking src0->type == src1->type...\n");
         GGML_ASSERT(src0->type == src1->type);
-        if(0) fprintf(stderr, "    src1 type ok\n");
-    } else {
-        if(0) fprintf(stderr, "  src1 not present, using split view from src0\n");
     }
 
     const int32_t swapped = ((const int32_t *) dst->op_params)[1];
-    if(0) fprintf(stderr, "  swapped = %d\n", swapped);
 
     if (src0->type == GGML_TYPE_F16) {
-        if(0) fprintf(stderr, "  f16 path\n");
         half * src0_p = (half *) src0_d;
         half * src1_p = (half *) src1_d;
 
         if (!src1) {
-            if(0) fprintf(stderr, "    no src1: adjusting pointers (swapped=%d)\n", swapped);
             src0_p += swapped ? nc : 0;
             src1_p += swapped ? 0 : nc;
-        } else {
-            if(0) fprintf(stderr, "    src1 present, pointers unchanged\n");
         }
 
-        fprintf(stderr, "dyn-ex swiglu launch<op> (half) nelements=%ld nc=%ld stride0=%ld stride1=%ld\n",
-                (long)ggml_nelements(dst), (long)nc,
-                (long)(src0_o / sizeof(half)), (long)(src1_o / sizeof(half)));
-        unary_gated_cuda<op>(src0_p, src1_p, (half *)dst_d, ggml_nelements(dst), nc,
-                             src0_o / sizeof(half), src1_o / sizeof(half), stream);
+        unary_gated_cuda<op>(src0_p, src1_p, (half *)dst_d, ggml_nelements(dst), nc, src0_o / sizeof(half), src1_o / sizeof(half), stream);
     } else {
-        if(0) fprintf(stderr, "  f32 path\n");
         float * src0_p = (float *) src0_d;
         float * src1_p = (float *) src1_d;
-        fprintf(stderr, "dyn-ex swiglu: src0_p=%p src1_p=%p dst=%p\n", (void*)src0_p, (void*)src1_p, (void*)dst_d);
-        fflush(stderr);
 
         if (!src1) {
-            if(0) fprintf(stderr, "    no src1: adjusting pointers (swapped=%d)\n", swapped);
             src0_p += swapped ? nc : 0;
             src1_p += swapped ? 0 : nc;
-        } else {
-            if(0) fprintf(stderr, "    src1 present, pointers unchanged\n");
         }
 
-        fprintf(stderr, "dyn-ex swiglu launch<op> (float) nelements=%ld nc=%ld stride0=%ld stride1=%ld\n",
-                (long)ggml_nelements(dst), (long)nc,
-                (long)(src0_o / sizeof(float)), (long)(src1_o / sizeof(float)));
-        unary_gated_cuda<op>(src0_p, src1_p, (float *)dst_d, ggml_nelements(dst), nc,
-                             src0_o / sizeof(float), src1_o / sizeof(float), stream);
+        unary_gated_cuda<op>(src0_p, src1_p, (float *)dst_d, ggml_nelements(dst), nc, src0_o / sizeof(float), src1_o / sizeof(float), stream);
     }
-
-    if(0) fprintf(stderr, "[ggml_cuda_op_unary_gated] exit\n");
 }
 
 void ggml_cuda_op_reglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -444,16 +346,6 @@ void ggml_cuda_op_geglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 }
 
 void ggml_cuda_op_swiglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    cudaError_t pre = cudaGetLastError();
-    if (pre != cudaSuccess) fprintf(stderr, "dyn-ex swiglu PRE err: %s\n", cudaGetErrorString(pre));
-    if(0) fprintf(stderr, "dyn-ex swiglu: %s src0 ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] src1 ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] data=%p\n",
-        ggml_get_name(dst),
-        dst->src[0] ? (long long)dst->src[0]->ne[0] : -1, dst->src[0] ? (long long)dst->src[0]->ne[1] : -1, dst->src[0] ? (long long)dst->src[0]->ne[2] : -1,
-        dst->src[0] ? dst->src[0]->nb[0] : 0, dst->src[0] ? dst->src[0]->nb[1] : 0, dst->src[0] ? dst->src[0]->nb[2] : 0,
-        dst->src[1] ? (long long)dst->src[1]->ne[0] : -1, dst->src[1] ? (long long)dst->src[1]->ne[1] : -1, dst->src[1] ? (long long)dst->src[1]->ne[2] : -1,
-        dst->src[0] ? dst->src[1]->nb[0] : 0, dst->src[1] ? dst->src[1]->nb[1] : 0, dst->src[1] ? dst->src[1]->nb[2] : 0,
-        dst->src[0] ? (void*)dst->src[0]->data : nullptr);
-    fflush(stderr);
     ggml_cuda_op_unary_gated<op_silu>(ctx, dst);
 }
 
@@ -476,7 +368,7 @@ static __global__ void swiglu_oai_kernel(const T * x, const T * g, T * dst, cons
     }
 
     // perform base op and multiply with gate (either offset in same tensor or a separate one)
-    const int64_t j0 = i;
+    const int64_t j0 = (i / n) * o0 + (i % n);
     const int64_t j1 = o0 == o1 ? j0 : (i / n) * o1 + (i % n);
 
     float xi = x[j0];
