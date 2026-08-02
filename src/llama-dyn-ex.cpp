@@ -346,7 +346,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->t_down.resize(n_layers, nullptr);
 
     // async prefetch infrastructure
-    {
+    if (dev) {
         ggml_backend_dev_props props;
         ggml_backend_dev_get_props(dev, &props);
         if (props.caps.async && props.caps.events && props.caps.host_buffer) {
