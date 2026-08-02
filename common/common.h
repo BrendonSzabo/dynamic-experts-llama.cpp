@@ -482,6 +482,10 @@ struct common_params {
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
     enum llama_load_mode  load_mode  = LLAMA_LOAD_MODE_MMAP; // how to load the model
 
+    std::string dyn_ex_path;
+    int32_t     dyn_ex_n_slots = 0;
+    std::string dyn_ex_predictor;
+
     common_cpu_params cpuparams;
     common_cpu_params cpuparams_batch;
 

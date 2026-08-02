@@ -147,6 +147,14 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             }
         }
     }
+
+    // write slot IDs (0,1,2,...) back to selected_experts for MUL_MAT_ID
+    std::vector<int32_t> slots(n_e);
+    for (int i = 0; i < n_e; i++) {
+        slots[i] = (i < n_slots) ? i : -1;
+    }
+    ggml_backend_tensor_set(src, slots.data(), 0, n_e * sizeof(int32_t));
+
     return false;
 }
 

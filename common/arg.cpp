@@ -2716,6 +2716,20 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_TENSOR_SPLIT"));
     add_opt(common_arg(
+        {"--dyn-ex"}, "FILE",
+        "path to VLLM\\x02 .bin file for dynamic expert offloading",
+        [](common_params & params, const std::string & value) {
+            params.dyn_ex_path = value;
+        }
+    ).set_env("LLAMA_ARG_DYN_EX"));
+    add_opt(common_arg(
+        {"--dyn-ex-l1"}, "N",
+        "number of GPU slots per layer for dynamic expert cache (0 = disabled, power of 2)",
+        [](common_params & params, const std::string & value) {
+            params.dyn_ex_n_slots = std::stoi(value);
+        }
+    ).set_env("LLAMA_ARG_DYN_EX_L1"));
+    add_opt(common_arg(
         {"-mg", "--main-gpu"}, "INDEX",
         string_format("the GPU to use for the model (with split-mode = none), or for intermediate results and KV (with split-mode = row) (default: %d)", params.main_gpu),
         [](common_params & params, int value) {
