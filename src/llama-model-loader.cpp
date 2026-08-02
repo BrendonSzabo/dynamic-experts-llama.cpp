@@ -1276,17 +1276,35 @@ struct ggml_tensor * llama_model_loader::create_tensor(
 
     LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
 
-    // dyn-ex: virtualize expert tensors with ne[2] > n_slots
-    std::vector<int64_t> ne_virt(ne.begin(), ne.end());
-    if (dyn_ex_n_slots > 0 && ne_virt.size() > 2 && ne_virt[2] > dyn_ex_n_slots) {
-        ne_virt[2] = dyn_ex_n_slots;
-        // also override the gguf tensor metadata before the dim check
-        ggml_tensor * t_meta = get_tensor_meta(tn.str().c_str());
-        if (t_meta && t_meta->ne[2] > (int64_t)dyn_ex_n_slots) {
-            t_meta->ne[2] = dyn_ex_n_slots;
+    if (dyn_ex_n_slots > 0 && ne.size() > 2 && *(ne.begin() + 2) > (int64_t)dyn_ex_n_slots) {
+        ggml_tensor * orig = get_tensor_meta(tn.str().c_str());
+        if (!orig) {
+            if (flags & TENSOR_NOT_REQUIRED) return nullptr;
+            throw std::runtime_error(format("tensor '%s' not found for dyn_ex override", tn.str().c_str()));
         }
+
+        ggml_tensor ovr;
+        memset(&ovr, 0, sizeof(ggml_tensor));
+        ovr.type = orig->type;
+        ovr.ne[0] = *(ne.begin() + 0);
+        ovr.ne[1] = *(ne.begin() + 1);
+        ovr.ne[2] = dyn_ex_n_slots;
+        ovr.ne[3] = ne.size() > 3 ? *(ne.begin() + 3) : 1;
+        ovr.nb[0] = ggml_type_size(ovr.type);
+        ovr.nb[1] = ovr.nb[0] * ((int64_t)ovr.ne[0] / (int64_t)ggml_blck_size(ovr.type));
+        ovr.nb[2] = ovr.nb[1] * ovr.ne[1];
+        ovr.nb[3] = ovr.nb[2] * ovr.ne[2];
+
+        ggml_backend_buffer_type_t buft = buft_for_tensor(&ovr);
+        GGML_ASSERT(buft != nullptr);
+        ggml_context * ctx = ctx_for_buft(buft);
+        ggml_tensor * ret = ggml_dup_tensor(ctx, &ovr);
+        ggml_set_name(ret, tn.str().c_str());
+        n_created++;
+        return ret;
     }
-    const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne_virt, !(flags & TENSOR_NOT_REQUIRED));
+
+    const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne, !(flags & TENSOR_NOT_REQUIRED));
 
     if (cur == NULL) {
         return NULL;
