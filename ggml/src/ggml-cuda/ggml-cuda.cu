@@ -7,6 +7,7 @@
 #include "ggml-cuda/acc.cuh"
 #include "ggml-cuda/add-id.cuh"
 #include "ggml-cuda/arange.cuh"
+static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 #include "ggml-cuda/argmax.cuh"
 #include "ggml-cuda/argsort.cuh"
 #include "ggml-cuda/binbcast.cuh"
@@ -2309,6 +2310,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_SSM_SCAN:
             ggml_cuda_op_ssm_scan(ctx, dst);
+            break;
+        case GGML_OP_DYN_EX_BARRIER:
+            ggml_cuda_op_dyn_ex_barrier(ctx, dst);
             break;
         case GGML_OP_TOP_K:
             ggml_cuda_op_top_k(ctx, dst);
@@ -5167,9 +5171,12 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_TRI:
         case GGML_OP_DIAG:
         case GGML_OP_SOLVE_TRI:
-            return true;
+             return true;
         case GGML_OP_LIGHTNING_INDEXER:
-            return ggml_cuda_lightning_indexer_supported(dev_ctx->device, op);
+             return ggml_cuda_lightning_indexer_supported(dev_ctx->device, op);
+
+        case GGML_OP_DYN_EX_BARRIER:
+            return true;
 
         default:
             return false;
@@ -5199,6 +5206,8 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
 
 static bool ggml_backend_cuda_device_offload_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
     ggml_backend_cuda_device_context * dev_ctx = (ggml_backend_cuda_device_context *) dev->context;
+
+    if (op->op == GGML_OP_DYN_EX_BARRIER) return true;
 
     return get_op_batch_size(op) >= dev_ctx->op_offload_min_batch_size;
 }
@@ -5436,6 +5445,27 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
     };
 
     return cuda_backend;
+}
+
+__global__ void dyn_ex_barrier_kernel(
+    int32_t * __restrict__ buf,
+    const int32_t * __restrict__ src,
+    int n_elements,
+    int n_total) {
+    buf[1] = n_elements;
+    for (int i = threadIdx.x + blockIdx.x * blockDim.x; i < n_elements; i += blockDim.x * gridDim.x) buf[2 + i] = src[i];
+    __threadfence_system();
+    __syncthreads();
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        buf[n_total - 2] = 1;
+        __threadfence_system();
+        while (buf[n_total - 1] == 0) { __threadfence_system(); }
+    }
+    __syncthreads();
+}
+
+static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    (void)ctx; (void)dst;
 }
 
 GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)
