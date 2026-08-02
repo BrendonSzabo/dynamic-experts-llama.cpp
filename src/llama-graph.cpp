@@ -1959,11 +1959,11 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
-        // create slot_ids tensor through the graph so scheduler allocates it
-        ggml_tensor * slot_ids = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, n_tokens);
-        ggml_build_forward_expand(gf, slot_ids);
-        bar->src[1] = slot_ids;
-        selected_experts_slots = slot_ids;
+        // create slot_ids with fixed max size, view actual batch for MUL_MAT_ID
+        ggml_tensor * slot_ids_full = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, 256);
+        ggml_build_forward_expand(gf, slot_ids_full);
+        bar->src[1] = slot_ids_full;
+        selected_experts_slots = ggml_view_2d(ctx0, slot_ids_full, n_expert_used, n_tokens, slot_ids_full->nb[1], 0);
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
         cb(selected_experts_slots, "ffn_moe_slots", il);
