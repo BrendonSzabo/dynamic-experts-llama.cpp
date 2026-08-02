@@ -84,7 +84,7 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
 };
 
 static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
-    if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
+    if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
     if (!pre) return true;
 
     auto * model = (const llama_model *)user_data;
@@ -131,16 +131,18 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         write_expert(layer.ffn_down_exps, de->pi_down, de->down_expert_size);
     }
 
-    // write slot IDs (0,1,2,...) back to selected_experts for MUL_MAT_ID
-    std::vector<int32_t> slots(n_e);
-    for (int i = 0; i < n_e; i++) {
-        slots[i] = (i < n_slots) ? i : -1;
-    }
-    if (src->data) {
+    // write slot IDs to the slot_ids graph input tensor (bar->src[1])
+    // not to selected_experts (bar->src[0]) — keep expert IDs intact for get_rows/add_id
+    ggml_tensor * dst = t->src[1];
+    if (dst && dst->data) {
+        std::vector<int32_t> slots(n_e);
+        for (int i = 0; i < n_e; i++) {
+            slots[i] = (i < n_slots) ? i : -1;
+        }
 #ifdef GGML_USE_CUDA
-        cudaMemcpy(src->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
 #else
-        memcpy(src->data, slots.data(), n_e * sizeof(int32_t));
+        memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
 #endif
     }
 
@@ -331,11 +333,9 @@ llama_context::llama_context(
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
     if (model.has_dyn_ex()) {
-        llm_fused_op_gdn_ch_probe.n_tokens_per_seq = 1;
         uint32_t max_b = model.dyn_ex_get_cache()->n_slots / (uint32_t)model.hparams.n_expert_used;
         if (max_b < 1) max_b = 1;
         cparams.n_ubatch = std::min(cparams.n_ubatch, max_b);
-        graph_reuse_disable = true;
     }
 
     cparams.n_outputs_max = params.n_outputs_max == 0 || llama_model_has_encoder(&model) ? cparams.n_batch : params.n_outputs_max;
