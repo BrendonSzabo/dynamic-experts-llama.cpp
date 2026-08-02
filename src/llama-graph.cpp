@@ -1965,9 +1965,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     // remap AFTER barrier (slot_map updated by ensure)
     if (slot_map != nullptr) {
-        // if(0) fprintf(stderr, "dyn-ex remap L%d: sm->buffer=%p sm->data=%p\n", il,
-        //     (void*)(slot_map->buffer), slot_map->data);
-        fflush(stderr);
         ggml_tensor * se_cont = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, selected_experts->ne[0], selected_experts->ne[1]);
         se_cont = ggml_cpy(ctx0, selected_experts, se_cont);
         ggml_build_forward_expand(gf, se_cont);
@@ -1976,13 +1973,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         selected_experts_slots = ggml_reshape_2d(ctx0, selected_experts_slots, selected_experts->ne[0], n_tokens);
         selected_experts_slots = ggml_cont(ctx0, selected_experts_slots);
         cb(selected_experts_slots, "ffn_moe_slots", il);
-        // if(0) fprintf(stderr, "dyn-ex remap L%d: data=%p buf=%p ne=[%lld,%lld]\n", il,
-        //     selected_experts_slots->data, (void*)selected_experts_slots->buffer,
-        //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
-        // if(0) fprintf(stderr, "dyn-ex graph L%d: remap done, nb=[%zu,%zu,%zu,%zu] ne=[%lld,%lld]\n", il,
-        //     selected_experts_slots->nb[0], selected_experts_slots->nb[1],
-        //     selected_experts_slots->nb[2], selected_experts_slots->nb[3],
-        //     (long long)selected_experts_slots->ne[0], (long long)selected_experts_slots->ne[1]);
     }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
