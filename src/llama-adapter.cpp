@@ -166,7 +166,7 @@ static void llama_adapter_lora_init_impl(llama_model & model, const char * path_
     {
         const gguf_context * gguf_ctx = ctx_gguf.get();
 
-        LLAMA_LOG_INFO("%s: Dumping metadata keys/values.\n", __func__);
+        //LLAMA_LOG_INFO("%s: Dumping metadata keys/values.\n", __func__);
 
         // get metadata as string
         for (int i = 0; i < gguf_get_n_kv(gguf_ctx); i++) {

@@ -2828,8 +2828,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 if (attr & LLAMA_TOKEN_ATTR_CONTROL && !(attr & LLAMA_TOKEN_ATTR_UNUSED)) {
                     // token is control, but not marked as EOG -> print a debug log
                     if (special_eog_ids.count(t.second) == 0) {
-                        LLAMA_LOG_DEBUG("%s: control token: %6d '%s' is not marked as EOG\n",
-                                __func__, t.second, t.first.c_str());
+                        //LLAMA_LOG_DEBUG("%s: control token: %6d '%s' is not marked as EOG\n",
+                                //__func__, t.second, t.first.c_str());
                     }
                 }
             }
@@ -2874,11 +2874,11 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
 
             llama_token end_id = LLAMA_TOKEN_NULL;
 
-            LLAMA_LOG_INFO("%s: printing all EOG tokens:\n", __func__);
+            //LLAMA_LOG_INFO("%s: printing all EOG tokens:\n", __func__);
             for (auto tid : special_eog_ids) {
                 if (tid < 0 || tid >= (llama_token) id_to_token.size()) {
-                    LLAMA_LOG_WARN("%s: EOG token id %d is out of range (vocab size %zu), skipping\n",
-                            __func__, tid, id_to_token.size());
+                    //LLAMA_LOG_WARN("%s: EOG token id %d is out of range (vocab size %zu), skipping\n",
+                    //        __func__, tid, id_to_token.size());
                     continue;
                 }
                 auto & text = id_to_token[tid].text;
@@ -3781,10 +3781,10 @@ void llama_vocab::impl::print_info() const {
     if (special_fim_sep_id != LLAMA_TOKEN_NULL) { LLAMA_LOG_INFO( "%s: FIM SEP token         = %d '%s'\n", __func__, special_fim_sep_id, id_to_token.at(special_fim_sep_id).text.c_str() ); }
 
     for (const auto & id : special_eog_ids) {
-        LLAMA_LOG_INFO( "%s: EOG token             = %d '%s'\n", __func__, id, id_to_token.at(id).text.c_str() );
+        //LLAMA_LOG_INFO( "%s: EOG token             = %d '%s'\n", __func__, id, id_to_token.at(id).text.c_str() );
     }
 
-    LLAMA_LOG_INFO("%s: max token length      = %d\n", __func__, max_token_len);
+    //LLAMA_LOG_INFO("%s: max token length      = %d\n", __func__, max_token_len);
 }
 
 llama_vocab::llama_vocab() : pimpl(new impl(*this)) {

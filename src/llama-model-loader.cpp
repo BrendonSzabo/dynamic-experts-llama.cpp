@@ -776,7 +776,7 @@ llama_model_loader::llama_model_loader(
             }
         }
 
-        LLAMA_LOG_INFO("%s: Dumping metadata keys/values. Note: KV overrides do not apply in this output.\n", __func__);
+        //LLAMA_LOG_INFO("%s: Dumping metadata keys/values. Note: KV overrides do not apply in this output.\n", __func__);
 
         for (int i = 0; i < n_kv; i++) {
             const char * name           = gguf_get_key(metadata, i);
@@ -1274,7 +1274,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         }
     }
 
-    LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
+    //LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
 
     if (dyn_ex_n_slots > 0 && ne.size() > 2 && *(ne.begin() + 2) > (int64_t)dyn_ex_n_slots) {
         ggml_tensor * orig = get_tensor_meta(tn.str().c_str());

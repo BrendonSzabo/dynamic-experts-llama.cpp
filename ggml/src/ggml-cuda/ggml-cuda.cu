@@ -4105,7 +4105,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
     if (graph->graph == nullptr) {
         if (ggml_cuda_info().devices[cuda_ctx->device].cc < GGML_CUDA_CC_VOLTA) {
             if (!graph->disable_due_to_gpu_arch) {
-                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
+                //GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
             }
             graph->disable_due_to_gpu_arch = true;
         }

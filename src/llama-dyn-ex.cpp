@@ -186,8 +186,9 @@ size_t dyn_ex_read_param(const dyn_ex_reader * r, int param_idx, int layer, int 
     size_t file_off = r->param_data_off[param_idx]
                     + (size_t)(layer * r->n_experts + expert_id) * r->param_stride[param_idx];
 
-    memcpy(buf, (const uint8_t *)r->mmap_addr + file_off, expert_size);
-    return expert_size;
+    size_t n = expert_size < buf_size ? expert_size : buf_size;
+    memcpy(buf, (const uint8_t *)r->mmap_addr + file_off, n);
+    return n;
 }
 
 size_t dyn_ex_param_size(const dyn_ex_reader * r, int param_idx) {
@@ -281,7 +282,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->pi_up      = pi_up;
     cache->pi_down    = pi_down;
 
-    // compute per-expert sizes
+    // compute per-expert sizes (param shapes in .bin header are already per-expert)
     if (pi_gate_up >= 0) {
         cache->gate_up_expert_size = dyn_ex_param_size(reader, pi_gate_up);
     }

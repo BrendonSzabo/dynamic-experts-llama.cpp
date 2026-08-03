@@ -106,29 +106,33 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     auto * reader = de->reader;
     int n_slots = de->n_slots;
 
+    // use tensor nb[2] for per-expert sizes — the .bin header has one dtype for all layers
+    // but Q4_K_M mixes Q4_K and Q6_K per layer, so nb[2] is the ground truth
     size_t max_size = 0;
-    for (int pi = 0; pi < reader->n_params; pi++) {
-        size_t sz = dyn_ex_param_size(reader, pi);
-        if (sz > max_size) max_size = sz;
-    }
+    if (layer.ffn_gate_exps && layer.ffn_gate_exps->nb[2] > max_size) max_size = layer.ffn_gate_exps->nb[2];
+    if (layer.ffn_up_exps   && layer.ffn_up_exps->nb[2]   > max_size) max_size = layer.ffn_up_exps->nb[2];
+    if (layer.ffn_gate_up_exps && layer.ffn_gate_up_exps->nb[2] > max_size) max_size = layer.ffn_gate_up_exps->nb[2];
+    if (layer.ffn_down_exps && layer.ffn_down_exps->nb[2] > max_size) max_size = layer.ffn_down_exps->nb[2];
+    if (max_size == 0) max_size = 1;
     std::vector<uint8_t> cpu_buf(max_size);
 
     for (int slot = 0; slot < n_e && slot < n_slots; slot++) {
         int eid = ids[slot];
         if (eid < 0 || eid >= reader->n_experts) continue;
 
-        auto write_expert = [&](ggml_tensor * t, int pi, size_t expert_size) {
+        auto write_expert = [&](ggml_tensor * t, int pi) {
             if (!t || pi < 0 || !t->data) return;
+            size_t expert_size = t->nb[2];
             size_t n = dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), expert_size);
-            if (n != expert_size) return;
+            n = n < expert_size ? n : expert_size;
             size_t off = (size_t)slot * expert_size;
             cudaMemcpy((char *)t->data + off, cpu_buf.data(), n, cudaMemcpyHostToDevice);
         };
 
-        write_expert(layer.ffn_gate_exps, de->pi_gate, de->gate_expert_size);
-        write_expert(layer.ffn_up_exps, de->pi_up, de->up_expert_size);
-        write_expert(layer.ffn_gate_up_exps, de->pi_gate_up, de->gate_up_expert_size);
-        write_expert(layer.ffn_down_exps, de->pi_down, de->down_expert_size);
+        write_expert(layer.ffn_gate_exps,   de->pi_gate);
+        write_expert(layer.ffn_up_exps,     de->pi_up);
+        write_expert(layer.ffn_gate_up_exps, de->pi_gate_up);
+        write_expert(layer.ffn_down_exps,   de->pi_down);
     }
 
     // write slot IDs to the slot_ids graph input tensor (bar->src[1])

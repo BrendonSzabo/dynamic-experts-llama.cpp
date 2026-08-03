@@ -925,7 +925,7 @@ int main(int argc, char ** argv) {
     model.hparams.n_layer   = config.n_layers; //params.n_layer;
     model.hparams.n_rot     = std::min((uint32_t)params.n_rotmax, model.hparams.n_embd / model.hparams.n_head);
 
-    print_params(&model.hparams);
+    //print_params(&model.hparams);
 
     struct ggml_init_params lcparams;
     lcparams.mem_size   = 1024ll*1024ll*1024ll*((size_t) params.mem_model_gb);
