@@ -104,6 +104,9 @@ dyn_ex_reader * dyn_ex_reader_open(const char * path) {
     r->fd         = fd;
     r->mmap_addr  = addr;
     r->mmap_size  = file_size;
+
+    // pre-fault pages into OS page cache so .bin reads don't block on disk I/O
+    madvise(addr, file_size, MADV_WILLNEED);
     r->n_layers   = (int)read_u32_le(hdr + 10);
     r->n_experts  = (int)read_u32_le(hdr + 14);
     r->expert_stride = (int64_t)read_u64_le(hdr + 18);
@@ -161,6 +164,7 @@ dyn_ex_reader * dyn_ex_reader_open(const char * path) {
 
         r->param_data_off[i] = data_off;
         r->param_stride[i]   = stride;
+        r->param_size[i]     = per_expert_bytes;
 
         data_off += (size_t)r->n_layers * (size_t)r->n_experts * stride;
     }
@@ -181,7 +185,7 @@ size_t dyn_ex_read_param(const dyn_ex_reader * r, int param_idx, int layer, int 
     if (layer < 0 || layer >= r->n_layers)       return 0;
     if (expert_id < 0 || expert_id >= r->n_experts) return 0;
 
-    size_t expert_size = dyn_ex_param_size(r, param_idx);
+    size_t expert_size = r->param_size[param_idx];
 
     size_t file_off = r->param_data_off[param_idx]
                     + (size_t)(layer * r->n_experts + expert_id) * r->param_stride[param_idx];
@@ -239,19 +243,12 @@ static void raw_buf_write(ggml_backend_buffer_t buf, size_t offset, const void *
 
 dyn_ex_cache * dyn_ex_cache_init(
     dyn_ex_reader * reader,
-    int n_slots,
-    ggml_backend_dev_t dev,
-    ggml_backend_buffer_type_t buft,
-    ggml_tensor * /* expert_gate_up */,
-    ggml_tensor * /* expert_gate */,
-    ggml_tensor * /* expert_up */,
-    ggml_tensor * expert_down) {
+    int n_l1, int n_l2, int n_expert_used,
+    ggml_backend_dev_t dev) {
 
-    if (!reader || n_slots < 1) return nullptr;
-
-    // validate n_slots is power of 2
-    if ((n_slots & (n_slots - 1)) != 0) {
-        LLAMA_LOG_ERROR("dyn-ex: n_slots must be power of 2, got %d\n", n_slots);
+    if (!reader || n_l1 < 1) return nullptr;
+    if ((n_l1 & (n_l1 - 1)) != 0) {
+        LLAMA_LOG_ERROR("dyn-ex: n_l1 must be power of 2, got %d\n", n_l1);
         return nullptr;
     }
 
@@ -272,638 +269,76 @@ dyn_ex_cache * dyn_ex_cache_init(
         return nullptr;
     }
 
-    dyn_ex_cache * cache = new dyn_ex_cache();
-    cache->reader    = reader;
-    cache->n_layers  = n_layers;
-    cache->n_experts = n_experts;
-    cache->n_slots   = n_slots;
+    auto * cache = new dyn_ex_cache();
+    cache->reader        = reader;
+    cache->n_l1          = n_l1;
+    cache->n_l2          = n_l2;
+    cache->n_layers      = n_layers;
+    cache->n_experts     = n_experts;
+    cache->n_expert_used = n_expert_used;
+
+    cache->n_ubatch = std::max(1, (n_l1 / n_expert_used) / 2);
+    cache->n_hot    = cache->n_ubatch * n_expert_used;
+    cache->n_cache  = n_l1 - cache->n_hot;
+
     cache->pi_gate_up = pi_gate_up;
     cache->pi_gate    = pi_gate;
     cache->pi_up      = pi_up;
     cache->pi_down    = pi_down;
 
-    // compute per-expert sizes (param shapes in .bin header are already per-expert)
-    if (pi_gate_up >= 0) {
-        cache->gate_up_expert_size = dyn_ex_param_size(reader, pi_gate_up);
-    }
-    if (pi_gate >= 0) {
-        cache->gate_expert_size = dyn_ex_param_size(reader, pi_gate);
-    }
-    if (pi_up >= 0) {
-        cache->up_expert_size = dyn_ex_param_size(reader, pi_up);
-    }
-    cache->down_expert_size = dyn_ex_param_size(reader, pi_down);
+    cache->l1_layer.assign(n_l1, DYN_EX_SENTINEL);
+    cache->l1_expert.assign(n_l1, DYN_EX_SENTINEL);
+    cache->l1_age.assign(n_l1, 0);
+    cache->l1_in_use.assign(n_l1, 0);
 
-    // init host arrays
-    cache->h_slot_of.assign((size_t)n_layers * n_experts, DYN_EX_SENTINEL);
-    cache->h_expert_in.assign((size_t)n_layers * n_slots, DYN_EX_SENTINEL);
-    cache->h_slot_used.assign((size_t)n_layers * n_slots, 0);
+    cache->l2.resize(n_layers);
 
-    // create GPU buffers using scheduler's CUDA buft
-    if(0) fprintf(stderr, "dyn-ex init: buft=%p dev=%p\n", (void*)buft, (void*)dev);
-    fflush(stderr);
+    LLAMA_LOG_INFO("dyn-ex: cache init: %d layers, %d experts, L1=%d slots (hot=%d cache=%d ubatch=%d), L2=%d per layer\n",
+                   n_layers, n_experts, n_l1, cache->n_hot, cache->n_cache, cache->n_ubatch, n_l2);
+
     (void)dev;
-
-    // slot_map buffer: [n_layers * n_expert] int32
-    size_t slot_map_bytes = (size_t)n_layers * n_experts * sizeof(int32_t);
-    cache->buf_slot_map.reset(buft ? ggml_backend_buft_alloc_buffer(buft, slot_map_bytes) : nullptr);
-    if (buft && !cache->buf_slot_map) { dyn_ex_cache_free(cache); return nullptr; }
-    if (buft) {
-        std::vector<uint8_t> init_buf(slot_map_bytes, 0);
-        raw_buf_write(cache->buf_slot_map.get(), 0, init_buf.data(), slot_map_bytes);
-    }
-
-    // slot_map_host not used (slot_map stays on GPU for performance)
-
-    // gate_up slot buffer (or gate + up separately)
-    cache->gate_up_stride = align_up(cache->gate_up_expert_size, 256);
-    if (pi_gate_up >= 0) {
-        size_t gate_up_buf_size = (size_t)n_layers * n_slots * cache->gate_up_stride;
-        cache->buf_gate_up.reset(buft ? ggml_backend_buft_alloc_buffer(buft, gate_up_buf_size) : nullptr);
-        if (buft && !cache->buf_gate_up) { dyn_ex_cache_free(cache); return nullptr; }
-        if (buft) ggml_backend_buffer_set_usage(cache->buf_gate_up.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-    }
-    if (pi_gate >= 0 && pi_up >= 0) {
-        cache->gate_stride = align_up(cache->gate_expert_size, 256);
-        cache->up_stride   = align_up(cache->up_expert_size, 256);
-        size_t gate_buf_size = (size_t)n_layers * n_slots * cache->gate_stride;
-        size_t up_buf_size   = (size_t)n_layers * n_slots * cache->up_stride;
-        cache->buf_gate.reset(buft ? ggml_backend_buft_alloc_buffer(buft, gate_buf_size) : nullptr);
-        cache->buf_up.reset(buft ? ggml_backend_buft_alloc_buffer(buft, up_buf_size) : nullptr);
-        if (buft && (!cache->buf_gate || !cache->buf_up)) { dyn_ex_cache_free(cache); return nullptr; }
-    }
-
-    // down slot buffer
-    cache->down_stride = align_up(cache->down_expert_size, 256);
-    {
-        size_t down_buf_size = (size_t)n_layers * n_slots * cache->down_stride;
-        cache->buf_down.reset(buft ? ggml_backend_buft_alloc_buffer(buft, down_buf_size) : nullptr);
-        if (buft && !cache->buf_down) { dyn_ex_cache_free(cache); return nullptr; }
-    }
-
-    cache->t_gate_up.resize(n_layers, nullptr);
-    cache->t_gate.resize(n_layers, nullptr);
-    cache->t_up.resize(n_layers, nullptr);
-    cache->t_down.resize(n_layers, nullptr);
-
-    // async prefetch infrastructure
-    if (dev) {
-        ggml_backend_dev_props props;
-        ggml_backend_dev_get_props(dev, &props);
-        if (props.caps.async && props.caps.events && props.caps.host_buffer) {
-            cache->copy_backend = ggml_backend_dev_init(dev, nullptr);
-            if (cache->copy_backend) {
-                int n_total_slots = n_layers * n_slots;
-                cache->copy_events.resize(n_total_slots, nullptr);
-                for (int i = 0; i < n_total_slots; i++) {
-                    cache->copy_events[i] = ggml_backend_event_new(dev);
-                }
-                // 4 pinned staging buffers for ring-buffer async copies
-                size_t max_expert = cache->gate_up_expert_size;
-                if (cache->gate_expert_size    > max_expert) max_expert = cache->gate_expert_size;
-                if (cache->up_expert_size      > max_expert) max_expert = cache->up_expert_size;
-                if (cache->down_expert_size    > max_expert) max_expert = cache->down_expert_size;
-                for (int i = 0; i < 4; i++) {
-                    cache->staging_bufs.emplace_back(max_expert);
-                }
-                LLAMA_LOG_INFO("dyn-ex: async prefetch enabled\n");
-            }
-        }
-    }
-
-    LLAMA_LOG_INFO("dyn-ex: cache init: %d layers, %d experts, %d slots, "
-                   "gate_up=%zuB/expert, down=%zuB/expert\n",
-                   n_layers, n_experts, n_slots,
-                   cache->gate_up_expert_size, cache->down_expert_size);
-
     return cache;
+}
+
+void dyn_ex_cache_set_layer_size(
+    dyn_ex_cache * cache, int layer,
+    size_t gate_size, size_t gate_row, size_t up_size, size_t up_row,
+    size_t down_size, size_t down_row, size_t gate_up_size, size_t gate_up_row) {
+
+    if (!cache || layer < 0 || layer >= cache->n_layers) return;
+    auto & l2 = cache->l2[layer];
+    l2.gate_size    = gate_size;
+    l2.gate_row     = gate_row;
+    l2.up_size      = up_size;
+    l2.up_row       = up_row;
+    l2.down_size    = down_size;
+    l2.down_row     = down_row;
+    l2.gate_up_size = gate_up_size;
+    l2.gate_up_row  = gate_up_row;
+
+    if (cache->n_l2 > 0) {
+        l2.expert.assign(cache->n_l2, DYN_EX_SENTINEL);
+        l2.slot_of.assign(cache->n_experts, DYN_EX_SENTINEL);
+        l2.age.assign(cache->n_l2, 0);
+        if (gate_size)    l2.gate.resize((size_t)cache->n_l2 * gate_size);
+        if (up_size)   l2.up.resize((size_t)cache->n_l2 * up_size);
+        if (down_size) l2.down.resize((size_t)cache->n_l2 * down_size);
+        if (gate_up_size) l2.gate_up.resize((size_t)cache->n_l2 * gate_up_size);
+    }
 }
 
 void dyn_ex_cache_free(dyn_ex_cache * cache) {
     if (!cache) return;
-    // wait for async copies before freeing
-    if (cache->copy_backend) {
-        for (auto ev : cache->copy_events) {
-            if (ev) {
-                ggml_backend_event_synchronize(ev);
-                ggml_backend_event_free(ev);
-            }
-        }
-        ggml_backend_free(cache->copy_backend);
-    }
-    cache->buf_gate_up.reset();
-    cache->buf_gate.reset();
-    cache->buf_up.reset();
-    cache->buf_down.reset();
-    cache->buf_slot_map.reset();
 #ifdef GGML_USE_CUDA
     for (auto * hp : cache->t_barrier_host) {
         if (hp) cudaFreeHost(hp);
     }
 #endif
+    delete cache->reader;
     delete cache;
 }
 
-void dyn_ex_cache_ensure(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
-    if (!cache || layer < 0 || layer >= cache->n_layers) return;
-    if (!expert_ids || n_ids <= 0) return;
-
-    // count unique experts
-    int n_unique = 0, n_loaded = 0;
-    for (int i = 0; i < n_ids; i++) {
-        int eid = expert_ids[i];
-        if (eid < 0 || eid >= cache->n_experts) continue;
-        int s = cache->h_slot_of[layer * cache->n_experts + eid];
-        if (s == DYN_EX_SENTINEL) n_unique++;
-    }
-    const int n_experts = cache->n_experts;
-    const int n_slots   = cache->n_slots;
-    const int layer_off_expert = layer * n_experts;
-    const int layer_off_slot   = layer * n_slots;
-
-    // CPU staging buffer
-    size_t max_expert_size = cache->gate_up_expert_size;
-    if (cache->gate_expert_size    > max_expert_size) max_expert_size = cache->gate_expert_size;
-    if (cache->up_expert_size      > max_expert_size) max_expert_size = cache->up_expert_size;
-    if (cache->down_expert_size    > max_expert_size) max_expert_size = cache->down_expert_size;
-    std::vector<uint8_t> cpu_buf(max_expert_size);
-
-    bool slot_map_changed = false;
-    int next_slot = 0; // simple round-robin for now
-
-    for (int i = 0; i < n_ids; i++) {
-        int eid = expert_ids[i];
-        if (eid < 0 || eid >= n_experts) continue;
-
-        // already loaded?
-        int existing_slot = cache->h_slot_of[layer_off_expert + eid];
-        if (existing_slot != DYN_EX_SENTINEL) continue;
-
-        // find a free slot (round-robin reuse)
-        int slot = -1;
-        for (int attempt = 0; attempt < n_slots; attempt++) {
-            int s = (next_slot + attempt) % n_slots;
-            if (!cache->h_slot_used[layer_off_slot + s]) {
-                slot = s;
-                break;
-            }
-        }
-        if (slot < 0) {
-            // all slots in use — find one whose expert is NOT in current batch
-            for (int attempt = 0; attempt < n_slots; attempt++) {
-                int s = (next_slot + attempt) % n_slots;
-                int victim_eid = cache->h_expert_in[layer_off_slot + s];
-                bool needed = false;
-                for (int j = 0; j < n_ids; j++) {
-                    if (expert_ids[j] == victim_eid) { needed = true; break; }
-                }
-                if (!needed) { slot = s; break; }
-            }
-            // if all slots contain needed experts (unlikely for n_slots < n_expert_used), fall back
-            if (slot < 0) slot = next_slot;
-        }
-        next_slot = (slot + 1) % n_slots;
-
-        // wait for any in-flight async copy on this slot before reusing it
-        if (cache->copy_backend) {
-            if(0) fprintf(stderr, "dyn-ex ensure: waiting for inflight copies to end.\n"); fflush(stderr);
-            int ev_idx = layer_off_slot + slot;
-            auto & ev = cache->copy_events[ev_idx];
-            if (ev) {
-                ggml_backend_event_synchronize(ev);
-            }
-        }
-
-        // load gate_up weights from .bin → CPU → GPU
-        if (cache->buf_gate_up && cache->pi_gate_up >= 0) {
-            if(0) fprintf(stderr, "dyn-ex ensure: load gate up\n"); fflush(stderr);
-
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate_up, layer, eid,
-                                         cpu_buf.data(), cache->gate_up_expert_size);
-            if (n == cache->gate_up_expert_size) {
-                size_t slot_off = (size_t)(layer_off_slot + slot) * cache->gate_up_stride;
-                raw_buf_write(cache->buf_gate_up.get(), slot_off, cpu_buf.data(), n);
-            }
-        }
-        if (cache->buf_gate && cache->pi_gate >= 0) {
-            if(0) fprintf(stderr, "dyn-ex ensure: load gate\n"); fflush(stderr);
-
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate, layer, eid,
-                                         cpu_buf.data(), cache->gate_expert_size);
-            if (n == cache->gate_expert_size) {
-                size_t slot_off = (size_t)(layer_off_slot + slot) * cache->gate_stride;
-                raw_buf_write(cache->buf_gate.get(), slot_off, cpu_buf.data(), n);
-            }
-        }
-        if (cache->buf_up && cache->pi_up >= 0) {
-            if(0) fprintf(stderr, "dyn-ex ensure: load up\n"); fflush(stderr);
-
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_up, layer, eid,
-                                         cpu_buf.data(), cache->up_expert_size);
-            if (n == cache->up_expert_size) {
-                size_t slot_off = (size_t)(layer_off_slot + slot) * cache->up_stride;
-                raw_buf_write(cache->buf_up.get(), slot_off, cpu_buf.data(), n);
-            }
-        }
-
-        // load down weights
-        {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_down, layer, eid,
-                                         cpu_buf.data(), cache->down_expert_size);
-            if (n == cache->down_expert_size) {
-                if(0) fprintf(stderr, "dyn-ex ensure: load down\ns"); fflush(stderr);
-
-                size_t slot_off = (size_t)(layer_off_slot + slot) * cache->down_stride;
-                raw_buf_write(cache->buf_down.get(), slot_off, cpu_buf.data(), n);
-            }
-        }
-
-        {
-            int old_eid = cache->h_expert_in[layer_off_slot + slot];
-            if (old_eid != DYN_EX_SENTINEL && old_eid != eid) {
-                cache->h_slot_of[layer_off_expert + old_eid] = DYN_EX_SENTINEL;
-            }
-        }
-        cache->h_slot_of[layer_off_expert + eid] = slot;
-        cache->h_expert_in[layer_off_slot + slot] = eid;
-        cache->h_slot_used[layer_off_slot + slot] = 1;
-        slot_map_changed = true;
-        if (eid == 249 && layer == 0) {
-            if(0) fprintf(stderr, "dyn-ex ensure L0: loaded eid=249 into slot=%d, h_slot_of[249]=%d\n",
-                    slot, cache->h_slot_of[layer_off_expert + 249]);
-        }
-    }
-
-    // sync slot_map to GPU
-    if (slot_map_changed && cache->buf_slot_map) {
-        // if(0) fprintf(stderr, "dyn-ex sync slot_map L%d: h[0]=%d h[8]=%d h[64]=%d\n",
-        //     layer, cache->h_slot_of[layer * cache->n_experts + 0],
-        //     cache->h_slot_of[layer * cache->n_experts + 8],
-        //     cache->h_slot_of[layer * cache->n_experts + 64]);
-        fflush(stderr);
-        size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
-        size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
-        if(0) fprintf(stderr, "dyn-ex: slot_map sync L%d off=%zu sz=%zu base=%p h[64]=%d\n",
-                layer, layer_byte_off, layer_byte_sz,
-                (void*)ggml_backend_buffer_get_base(cache->buf_slot_map.get()),
-                cache->h_slot_of[layer * n_experts + 64]);
-        raw_buf_write(cache->buf_slot_map.get(), layer_byte_off,
-                      cache->h_slot_of.data() + layer_off_expert, layer_byte_sz);
-        // readback verify
-        int32_t v0, v64;
-        ggml_tensor dummy;
-        memset(&dummy, 0, sizeof(dummy));
-        dummy.buffer = cache->buf_slot_map.get();
-        dummy.data   = (char*)ggml_backend_buffer_get_base(cache->buf_slot_map.get()) + layer_byte_off;
-        dummy.type   = GGML_TYPE_I32;
-        dummy.ne[0]  = n_experts;
-        dummy.ne[1]  = 1;
-        dummy.ne[2]  = 1;
-        dummy.ne[3]  = 1;
-        dummy.nb[0]  = 4;
-        ggml_backend_tensor_get(&dummy, &v0, 0, 4);
-        ggml_backend_tensor_get(&dummy, &v64, 64*4, 4);
-        if(0) fprintf(stderr, "dyn-ex: slot_map readback L%d v0=%d v64=%d\n", layer, v0, v64);
-    }
-}
-
-void dyn_ex_cache_ensure_ordered(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids) {
-    if (!cache || layer < 0 || layer >= cache->n_layers) return;
-    if (!expert_ids || n_ids <= 0) return;
-    if (n_ids > cache->n_slots) n_ids = cache->n_slots;
-
-    const int n_experts = cache->n_experts;
-    const int n_slots   = cache->n_slots;
-    const int layer_off_expert = layer * n_experts;
-    const int layer_off_slot   = layer * n_slots;
-
-    size_t max_expert_size = cache->gate_up_expert_size;
-    if (cache->gate_expert_size    > max_expert_size) max_expert_size = cache->gate_expert_size;
-    if (cache->up_expert_size      > max_expert_size) max_expert_size = cache->up_expert_size;
-    if (cache->down_expert_size    > max_expert_size) max_expert_size = cache->down_expert_size;
-    std::vector<uint8_t> cpu_buf(max_expert_size);
-    bool slot_map_changed = false;
-
-    for (int i = 0; i < n_ids; i++) {
-        int slot = i;
-        int eid = expert_ids[i];
-        if (eid < 0 || eid >= n_experts) continue;
-
-        int existing = cache->h_slot_of[layer_off_expert + eid];
-        if (0) fprintf(stderr, "dyn-ex ordered L%d i=2: eid=%d existing=%d h_expert_in[slot2]=%d\n",
-            layer, eid, existing, cache->h_expert_in[layer_off_slot + slot]);
-        if (existing == slot) continue;
-        if (existing >= 0) {
-            cache->h_expert_in[layer_off_slot + existing] = DYN_EX_SENTINEL;
-        }
-
-        int old_eid = cache->h_expert_in[layer_off_slot + slot];
-        if (old_eid != DYN_EX_SENTINEL && old_eid != eid) {
-            cache->h_slot_of[layer_off_expert + old_eid] = DYN_EX_SENTINEL;
-        }
-
-        if (cache->buf_gate && cache->pi_gate >= 0) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate, layer, eid, cpu_buf.data(), cache->gate_expert_size);
-            if (n == cache->gate_expert_size) {
-                raw_buf_write(cache->buf_gate.get(), (size_t)(layer_off_slot + slot) * cache->gate_stride, cpu_buf.data(), n);
-            }
-        }
-        if (cache->buf_up && cache->pi_up >= 0) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_up, layer, eid, cpu_buf.data(), cache->up_expert_size);
-            if (n == cache->up_expert_size) {
-                raw_buf_write(cache->buf_up.get(), (size_t)(layer_off_slot + slot) * cache->up_stride, cpu_buf.data(), n);
-            }
-        }
-        {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_down, layer, eid, cpu_buf.data(), cache->down_expert_size);
-            if (n == cache->down_expert_size) {
-                raw_buf_write(cache->buf_down.get(), (size_t)(layer_off_slot + slot) * cache->down_stride, cpu_buf.data(), n);
-            }
-        }
-
-        cache->h_slot_of[layer_off_expert + eid] = slot;
-        cache->h_expert_in[layer_off_slot + slot] = eid;
-        cache->h_slot_used[layer_off_slot + slot] = 1;
-        slot_map_changed = true;
-    }
-
-    if (slot_map_changed && cache->buf_slot_map) {
-        size_t layer_byte_off = (size_t)layer * n_experts * sizeof(int32_t);
-        size_t layer_byte_sz  = (size_t)n_experts * sizeof(int32_t);
-        if(0) fprintf(stderr, "dyn-ex ensure_ordered L%d sync: h_slot_of[%d]=%d (off=%zu sz=%zu)\n",
-            layer, expert_ids[2], cache->h_slot_of[layer_off_expert + expert_ids[2]], layer_byte_off, layer_byte_sz);
-        raw_buf_write(cache->buf_slot_map.get(), layer_byte_off,
-                      cache->h_slot_of.data() + layer_off_expert, layer_byte_sz);
-    }
-}
-
-void dyn_ex_cache_fill(dyn_ex_cache * cache) {
-    if (!cache) return;
-    std::vector<int> ids(cache->n_slots);
-    for (int l = 0; l < cache->n_layers; l++) {
-        for (int s = 0; s < cache->n_slots; s++) ids[s] = s;
-        dyn_ex_cache_ensure(cache, l, ids.data(), cache->n_slots);
-    }
-    LLAMA_LOG_INFO("dyn-ex: filled %d layers with %d experts each\n",
-                   cache->n_layers, cache->n_slots);
-}
-
-void dyn_ex_cache_prefetch(dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids,
-                           const float * scores) {
-    if (!cache || !cache->copy_backend) return;
-    if (layer < 0 || layer >= cache->n_layers) return;
-    if (!expert_ids || n_ids <= 0) return;
-
-    const int n_experts = cache->n_experts;
-    const int n_slots   = cache->n_slots;
-    const int layer_off_expert = layer * n_experts;
-    const int layer_off_slot   = layer * n_slots;
-    (void)scores; // eviction priority — used when predictor provides scores
-
-    // ring-buffer staging index
-    std::vector<uint8_t> & cpu_buf = cache->staging_bufs[cache->staging_idx];
-    cache->staging_idx = (cache->staging_idx + 1) % (int)cache->staging_bufs.size();
-    int next_slot = 0;
-
-    for (int i = 0; i < n_ids; i++) {
-        if(0) fprintf(stderr, "dyn-ex ensure L%d load i=%d of %d\n", layer, i, n_ids); fflush(stderr);
-        int eid = expert_ids[i];
-        if (eid < 0 || eid >= n_experts) continue;
-
-        // skip if already loaded
-        if (cache->h_slot_of[layer_off_expert + eid] != DYN_EX_SENTINEL) continue;
-
-        // find free slot
-        int slot = -1;
-        for (int attempt = 0; attempt < n_slots; attempt++) {
-            int s = (next_slot + attempt) % n_slots;
-            if (!cache->h_slot_used[layer_off_slot + s]) {
-                slot = s;
-                break;
-            }
-        }
-        if (slot < 0) {
-            // all slots occupied, skip prefetch for this expert
-            continue;
-        }
-        next_slot = (slot + 1) % n_slots;
-
-        int ev_idx = layer_off_slot + slot;
-        // wait for previous copy on this slot
-        if (cache->copy_events[ev_idx]) {
-            ggml_backend_event_synchronize(cache->copy_events[ev_idx]);
-        }
-
-        // mark slot as in-use before async copy starts
-        cache->h_slot_used[ev_idx] = 1;
-        cache->h_expert_in[ev_idx] = eid;
-        cache->h_slot_of[layer_off_expert + eid] = slot;
-
-        // read gate_up weights from .bin into staging buffer
-        if (cache->buf_gate_up && cache->pi_gate_up >= 0 && cache->t_gate_up[layer]) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate_up, layer, eid,
-                                         cpu_buf.data(), cache->gate_up_expert_size);
-            if (n == cache->gate_up_expert_size) {
-                size_t slot_off = (size_t)slot * cache->gate_up_stride;
-                ggml_backend_tensor_set_async(
-                    cache->copy_backend,
-                    cache->t_gate_up[layer], cpu_buf.data(), slot_off, n);
-            }
-        }
-        if (cache->buf_gate && cache->pi_gate >= 0 && cache->t_gate[layer]) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_gate, layer, eid,
-                                         cpu_buf.data(), cache->gate_expert_size);
-            if (n == cache->gate_expert_size) {
-                size_t slot_off = (size_t)slot * cache->gate_stride;
-                ggml_backend_tensor_set_async(
-                    cache->copy_backend,
-                    cache->t_gate[layer], cpu_buf.data(), slot_off, n);
-            }
-        }
-        if (cache->buf_up && cache->pi_up >= 0 && cache->t_up[layer]) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_up, layer, eid,
-                                         cpu_buf.data(), cache->up_expert_size);
-            if (n == cache->up_expert_size) {
-                size_t slot_off = (size_t)slot * cache->up_stride;
-                ggml_backend_tensor_set_async(
-                    cache->copy_backend,
-                    cache->t_up[layer], cpu_buf.data(), slot_off, n);
-            }
-        }
-
-        // read down weights from .bin into staging buffer (reuse same buf serially)
-        if (cache->buf_down && cache->pi_down >= 0 && cache->t_down[layer]) {
-            size_t n = dyn_ex_read_param(cache->reader, cache->pi_down, layer, eid,
-                                         cpu_buf.data(), cache->down_expert_size);
-            if (n == cache->down_expert_size) {
-                size_t slot_off = (size_t)slot * cache->down_stride;
-                ggml_backend_tensor_set_async(
-                    cache->copy_backend,
-                    cache->t_down[layer], cpu_buf.data(), slot_off, n);
-            }
-        }
-
-        // record event for this slot
-        ggml_backend_event_record(cache->copy_events[ev_idx], cache->copy_backend);
-    }
-}
-
-void dyn_ex_cache_wait(dyn_ex_cache * cache, int layer) {
-    if (!cache || !cache->copy_backend) return;
-    if (layer < 0 || layer >= cache->n_layers) return;
-
-    int layer_off_slot = layer * cache->n_slots;
-    for (int s = 0; s < cache->n_slots; s++) {
-        int ev_idx = layer_off_slot + s;
-        auto & ev = cache->copy_events[ev_idx];
-        if (ev) {
-            // check if event is done before synchronizing
-            ggml_backend_event_synchronize(ev);
-        }
-    }
-}
-
-// ── predictor ──────────────────────────────────────────────────────────
-
-#define DYN_EX_PRED_MAGIC "DXP2"
-
-dyn_ex_predictor * dyn_ex_predictor_load(const char * path, int D, int L, int E, int H) {
-    FILE * f = fopen(path, "rb");
-    if (!f) {
-        LLAMA_LOG_ERROR("dyn-ex predictor: failed to open %s\n", path);
-        return nullptr;
-    }
-
-    char magic[5] = {};
-    int32_t hdr[4] = {};
-    if (fread(magic, 1, 4, f) != 4 || memcmp(magic, DYN_EX_PRED_MAGIC, 4) != 0) {
-        LLAMA_LOG_ERROR("dyn-ex predictor: bad magic\n");
-        fclose(f);
-        return nullptr;
-    }
-    if (fread(hdr, sizeof(hdr), 1, f) != 1) {
-        LLAMA_LOG_ERROR("dyn-ex predictor: short header\n");
-        fclose(f);
-        return nullptr;
-    }
-    int fD = hdr[0], fL = hdr[1], fE = hdr[2], fH = hdr[3];
-    if (fD != D || fL != L || fE != E || fH != H) {
-        LLAMA_LOG_ERROR("dyn-ex predictor: dim mismatch: file (%d,%d,%d,%d) vs expected (%d,%d,%d,%d)\n",
-                        fD, fL, fE, fH, D, L, E, H);
-        fclose(f);
-        return nullptr;
-    }
-
-    auto * p = new dyn_ex_predictor();
-    p->D = D; p->L = L; p->E = E; p->H = H;
-
-    auto load_vec = [&](std::vector<float> & v, size_t n) -> bool {
-        v.resize(n);
-        return fread(v.data(), sizeof(float), n, f) == n;
-    };
-
-    bool ok = true;
-    ok = ok && load_vec(p->trunk_w, (size_t)H * D);
-    ok = ok && load_vec(p->trunk_b, (size_t)H);
-    ok = ok && load_vec(p->W1,      (size_t)L * H * (H + E));
-    ok = ok && load_vec(p->b1,      (size_t)L * H);
-    ok = ok && load_vec(p->W2,      (size_t)L * E * H);
-    ok = ok && load_vec(p->b2,      (size_t)L * E);
-
-    fclose(f);
-
-    if (!ok) {
-        LLAMA_LOG_ERROR("dyn-ex predictor: short weight data\n");
-        delete p;
-        return nullptr;
-    }
-
-    LLAMA_LOG_INFO("dyn-ex predictor: loaded %s (D=%d L=%d E=%d H=%d)\n", path, D, L, E, H);
-    return p;
-}
-
-void dyn_ex_predictor_free(dyn_ex_predictor * p) {
-    delete p;
-}
-
-void dyn_ex_predictor_predict(dyn_ex_predictor * p,
-    int n_tokens,
-    const float * ht, const float * Et, int layer, int top_k,
-    int * top_ids, float * scores) {
-
-    if (!p || n_tokens <= 0 || !ht || !Et || !top_ids) return;
-
-    const int D = p->D, E = p->E, H = p->H;
-    const int HpE = H + E;
-
-    std::vector<float> z(n_tokens * H);
-    std::vector<float> x(n_tokens * HpE);
-    std::vector<float> h_buf(n_tokens * H);
-    std::vector<float> logits(n_tokens * E);
-
-    for (int n = 0; n < n_tokens; n++) {
-        for (int j = 0; j < H; j++) {
-            float sum = p->trunk_b[j];
-            for (int i = 0; i < D; i++) {
-                sum += ht[n * D + i] * p->trunk_w[j * D + i];
-            }
-            z[n * H + j] = sum > 0.0f ? sum : 0.0f;
-        }
-    }
-
-    for (int n = 0; n < n_tokens; n++) {
-        memcpy(x.data() + n * HpE, z.data() + n * H, H * sizeof(float));
-        memcpy(x.data() + n * HpE + H, Et + n * E, E * sizeof(float));
-    }
-
-    const float * W1_l = p->W1.data() + (size_t)layer * H * HpE;
-    const float * b1_l = p->b1.data() + (size_t)layer * H;
-
-    for (int n = 0; n < n_tokens; n++) {
-        for (int j = 0; j < H; j++) {
-            float sum = b1_l[j];
-            for (int i = 0; i < HpE; i++) {
-                sum += x[n * HpE + i] * W1_l[j * HpE + i];
-            }
-            h_buf[n * H + j] = sum > 0.0f ? sum : 0.0f;
-        }
-    }
-
-    const float * W2_l = p->W2.data() + (size_t)layer * E * H;
-    const float * b2_l = p->b2.data() + (size_t)layer * E;
-
-    for (int n = 0; n < n_tokens; n++) {
-        for (int j = 0; j < E; j++) {
-            float sum = b2_l[j];
-            for (int i = 0; i < H; i++) {
-                sum += h_buf[n * H + i] * W2_l[j * H + i];
-            }
-            logits[n * E + j] = sum;
-        }
-    }
-
-    if (scores) {
-        memcpy(scores, logits.data(), n_tokens * E * sizeof(float));
-    }
-
-    for (int n = 0; n < n_tokens; n++) {
-        const float * row = logits.data() + n * E;
-        int * out = top_ids + n * top_k;
-
-        std::vector<std::pair<float, int>> pairs(E);
-        for (int e = 0; e < E; e++) {
-            pairs[e] = {row[e], e};
-        }
-        std::partial_sort(pairs.begin(), pairs.begin() + top_k, pairs.end(),
-            [](const auto & a, const auto & b) { return a.first > b.first; });
-
-        for (int k = 0; k < top_k; k++) {
-            out[k] = pairs[k].second;
-        }
-    }
-}
-
-void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used) {
+void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, int n_layers, int n_expert_used) {
     int max_el = n_expert_used * 4096;
     for (int i = 0; i < n_layers; i++) {
         auto * t = new ggml_tensor();

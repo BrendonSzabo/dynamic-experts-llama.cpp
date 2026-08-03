@@ -341,7 +341,8 @@ extern "C" {
 
         // dyn-ex: dynamic expert offloading
         const char * dyn_ex_path;       // path to VLLM\x02 .bin file (NULL = disabled)
-        int32_t      dyn_ex_n_slots;    // number of GPU slots per layer (0 = disabled)
+        int32_t      dyn_ex_n_slots;    // number of global GPU expert slots (0 = disabled, power of 2)
+        int32_t      dyn_ex_n_l2;       // number of host slots per layer (0 = disabled)
         const char * dyn_ex_predictor;  // path to MLP predictor weights (NULL = disabled)
     };
 

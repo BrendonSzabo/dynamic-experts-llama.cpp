@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <vector>
 
 // dyn-ex: .bin file reader for VLLM\x02 expert weight format (produced by convert-gguf-to-expert-binary.py)
@@ -18,8 +19,8 @@ struct dyn_ex_param {
     char     name[256];
     int64_t  shape[4];
     int      ndim;
-    uint8_t  dtype_code;   // from convert-gguf-to-expert-binary.py mapping
-    enum ggml_type type;    // resolved ggml type
+    uint8_t  dtype_code;
+    enum ggml_type type;
 };
 
 struct dyn_ex_reader {
@@ -29,179 +30,118 @@ struct dyn_ex_reader {
 
     int      n_layers;
     int      n_experts;
-    int64_t  expert_stride;  // total bytes per expert (sum of all params, rounded up)
+    int64_t  expert_stride;
     int      n_params;
 
-    dyn_ex_param params[8];        // up to 8 params
-    size_t       param_data_off[8]; // file offset where each param's data section starts
-    size_t       param_stride[8];   // per-expert byte stride for each param (page-aligned)
+    dyn_ex_param params[8];
+    size_t       param_data_off[8];
+    size_t       param_stride[8];
+    size_t       param_size[8];
 };
 
-// open and mmap a .bin file, parse header. returns nullptr on failure.
 dyn_ex_reader * dyn_ex_reader_open(const char * path);
-
-// close and free
 void dyn_ex_reader_close(dyn_ex_reader * r);
 
-// read one expert's weights for one param into a caller-provided buffer.
-// returns actual bytes read, or 0 on error.
 size_t dyn_ex_read_param(const dyn_ex_reader * r, int param_idx, int layer, int expert_id,
                          void * buf, size_t buf_size);
-
-// get per-expert byte size for a param
 size_t dyn_ex_param_size(const dyn_ex_reader * r, int param_idx);
-
-// find param index by name (e.g. "gate_up_proj", "down_proj"). returns -1 if not found.
 int dyn_ex_param_index(const dyn_ex_reader * r, const char * name);
 
-// ── slot cache ──────────────────────────────────────────────────────────
+// ── 3-level expert cache: L1 (GPU, global) → L2 (host, per-layer) → L3 (.bin mmap) ──
 
 #define DYN_EX_SENTINEL (-1)
 
 struct dyn_ex_cache {
     dyn_ex_reader * reader;
 
+    int n_l1;          // GPU slots (--dyn-ex-l1)
+    int n_l2;          // host slots per layer (--dyn-ex-l2)
     int n_layers;
     int n_experts;
-    int n_slots;
+    int n_expert_used;
+    int n_ubatch;      // max(1, n_l1 / n_expert_used / 2)
+    int n_hot;         // n_ubatch * n_expert_used — active range [0, n_hot)
+    int n_cache;       // n_l1 - n_hot — LRU cache range [n_hot, n_l1)
 
-    // param indices in the reader
-    int pi_gate_up;  // "gate_up_proj" or -1
-    int pi_gate;     // "gate_proj" or -1
-    int pi_up;       // "up_proj" or -1
-    int pi_down;     // "down_proj"
+    // .bin param indices
+    int pi_gate_up, pi_gate, pi_up, pi_down;
 
-    // per-expert and per-slot byte sizes
-    size_t gate_up_expert_size; // bytes per expert for fused gate+up
-    size_t gate_expert_size;    // bytes per expert for separate gate
-    size_t up_expert_size;      // bytes per expert for separate up
-    size_t down_expert_size;
+    // L1: global GPU tensors (all layers share these)
+    struct ggml_tensor * l1_gate    = nullptr;
+    struct ggml_tensor * l1_up      = nullptr;
+    struct ggml_tensor * l1_down_q4 = nullptr;
+    struct ggml_tensor * l1_down_q6 = nullptr;
+    struct ggml_tensor * l1_gate_up = nullptr;
 
-    // GPU slot buffers
-    ggml_backend_buffer_ptr buf_gate_up; // [n_layers, n_slots, gate_up_expert_size] (merged)
-    ggml_backend_buffer_ptr buf_gate;    // [n_layers, n_slots, gate_expert_size] (separate)
-    ggml_backend_buffer_ptr buf_up;      // [n_layers, n_slots, up_expert_size]   (separate)
-    ggml_backend_buffer_ptr buf_down;    // [n_layers, n_slots, down_expert_size]
-    ggml_backend_buffer_ptr buf_slot_map;
+    // per-slot stride for L1 (max across layers, with zero-padding for smaller)
+    size_t l1_stride_gate    = 0;
+    size_t l1_stride_up      = 0;
+    size_t l1_stride_down    = 0;
+    size_t l1_stride_gate_up = 0;
 
-    // FP16 dequantized buffers — shared across layers, n_expert_used slots
-    ggml_backend_buffer_ptr buf_f16_gate; // [ne0, ne1, n_expert_used] GGML_TYPE_F16
-    ggml_backend_buffer_ptr buf_f16_up;
-    ggml_backend_buffer_ptr buf_f16_down;
-    size_t f16_gate_stride = 0;
-    size_t f16_up_stride   = 0;
-    size_t f16_down_stride = 0;
-    int n_expert_used = 8;
+    // L1 slot tracking [n_l1]
+    std::vector<int32_t> l1_layer;   // which layer, -1 = empty
+    std::vector<int32_t> l1_expert;  // which expert
+    std::vector<uint64_t> l1_age;    // LRU timestamp
+    std::vector<uint8_t>  l1_in_use; // 1 = pinned (for future features)
 
-    // per-layer slot_map host pointers (cudaHostAllocMapped, same as dev_ptr)
-    std::vector<void *> slot_map_host;  // [n_layers] — CPU writes here, GPU reads via tensors
+    // L2: per-layer host buffers [n_layers]
+    struct l2_layer {
+        std::vector<uint8_t> gate;
+        std::vector<uint8_t> up;
+        std::vector<uint8_t> down;
+        std::vector<uint8_t> gate_up;
+        std::vector<int32_t>  expert;        // [n_l2] which expert in each slot, -1 = empty
+        std::vector<int32_t>  slot_of;       // [n_experts] which slot holds each expert, -1 = not cached
+        std::vector<uint64_t> age;           // [n_l2] LRU
+        size_t gate_size    = 0;
+        size_t up_size      = 0;
+        size_t down_size    = 0;
+        size_t gate_up_size = 0;
+        size_t gate_row     = 0;
+        size_t up_row       = 0;
+        size_t down_row     = 0;
+        size_t gate_up_row  = 0;
+    };
+    std::vector<l2_layer> l2;
 
-    // GPU tensors pointing into the buffers
-    struct ggml_tensor * slot_gate_up = nullptr; // shape [..., n_slots] for ggml_mul_mat_id
-    struct ggml_tensor * slot_down    = nullptr; // shape [..., n_slots] for ggml_mul_mat_id
-    struct ggml_tensor * slot_map     = nullptr; // [n_expert] int32 per layer (flat: n_layers * n_expert)
+    uint64_t clock = 0;
 
-    // host-side mirror of slot_map (written by ensure, sync'd to GPU)
-    std::vector<int32_t> h_slot_of;   // [n_layers * n_expert], DYN_EX_SENTINEL = not present
-    std::vector<int32_t> h_expert_in; // [n_layers * n_slots], DYN_EX_SENTINEL = empty
-    std::vector<uint8_t>  h_slot_used;// [n_layers * n_slots]
+    // barriers per layer
+    std::vector<struct ggml_tensor *> t_barrier;
+    std::vector<void *>               t_barrier_host;
 
-    // async prefetch infrastructure
-    ggml_backend_t                  copy_backend = nullptr; // separate backend for async H→D copies
-    std::vector<ggml_backend_event_t> copy_events;  // [n_layers * n_slots], per-slot events
-    std::vector<std::vector<uint8_t>> staging_bufs; // pinned CPU staging buffers (ring)
-    int                             staging_idx = 0;       // current staging buffer index
-
-    // per-layer slot tensors (needed for async copies via ggml_backend_tensor_set_async)
-    std::vector<ggml_tensor *> t_gate_up; // [n_layers], per-layer slot tensors for gate_up
-    std::vector<ggml_tensor *> t_gate;    // [n_layers], per-layer slot tensors for gate (separate)
-    std::vector<ggml_tensor *> t_up;      // [n_layers], per-layer slot tensors for up (separate)
-    std::vector<ggml_tensor *> t_down;    // [n_layers], per-layer slot tensors for down
-
-    // per-layer selected_experts capture buffers (GPU→CPU readback after graph compute)
-    std::vector<ggml_backend_buffer_ptr> buf_se_capture; // [n_layers]
-    std::vector<ggml_tensor *>           t_se_capture;   // [n_layers] I32, [n_expert_used, n_tokens]
-    std::vector<ggml_backend_buffer_ptr> buf_barrier; // per-layer barrier buffers (host-visible)
-    std::vector<ggml_tensor *>           t_barrier;   // per-layer barrier tensors
-    std::vector<void *>                  t_barrier_host; // host pointers for CPU access
-
-    size_t gate_up_stride = 0; // bytes per slot in gate_up buffer (aligned)
-    size_t gate_stride    = 0; // bytes per slot in gate buffer (separate, aligned)
-    size_t up_stride      = 0; // bytes per slot in up buffer (separate, aligned)
-    size_t down_stride    = 0; // bytes per slot in down buffer (aligned)
+#ifdef GGML_USE_CUDA
+    std::mutex l2_mutex; // protects L2 eviction
+#endif
 };
 
-// create slot cache backed by .bin file. returns nullptr on failure.
-// dev: GPU device for slot buffers
-// n_slots: number of slots per layer (must be power of 2)
-// expert_tensor_gate_up: the original ggml tensor for gate_up_exps (provides shape/dtype info)
-// expert_tensor_down:    the original ggml tensor for down_exps
 dyn_ex_cache * dyn_ex_cache_init(
     struct dyn_ex_reader * reader,
-    int n_slots,
-    ggml_backend_dev_t dev,
-    ggml_backend_buffer_type_t buft,
-    struct ggml_tensor * expert_gate_up,  // can be nullptr (for separate gate/up models)
-    struct ggml_tensor * expert_gate,     // can be nullptr
-    struct ggml_tensor * expert_up,       // can be nullptr
-    struct ggml_tensor * expert_down);
+    int n_l1, int n_l2, int n_expert_used,
+    ggml_backend_dev_t dev);
 
 void dyn_ex_cache_free(struct dyn_ex_cache * cache);
+void dyn_ex_cache_alloc_barriers(struct dyn_ex_cache * cache, int n_layers, int n_expert_used);
 
-// ensure expert_ids are loaded into slots for the given layer (blocking).
-// updates h_slot_of / h_expert_in / h_slot_used, syncs slot_map to GPU.
-void dyn_ex_cache_ensure(struct dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids);
-void dyn_ex_cache_ensure_ordered(struct dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids);
+// set per-layer expert size info for L2 sizing (called from dyn_ex_init after tensor creation)
+void dyn_ex_cache_set_layer_size(
+    struct dyn_ex_cache * cache, int layer,
+    size_t gate_size, size_t gate_row, size_t up_size, size_t up_row,
+    size_t down_size, size_t down_row, size_t gate_up_size, size_t gate_up_row);
 
-// fill initial slots with first n_slots experts of each layer
-void dyn_ex_cache_fill(struct dyn_ex_cache * cache);
-void dyn_ex_cache_alloc_barriers(struct dyn_ex_cache * cache, ggml_backend_dev_t dev, int n_layers, int n_expert_used);
-
-// async prefetch: start loading expert_ids into slots without blocking.
-// scores: optional (n_expert) array for eviction priority (higher = keep). may be nullptr.
-void dyn_ex_cache_prefetch(struct dyn_ex_cache * cache, int layer, const int * expert_ids, int n_ids,
-                           const float * scores);
-
-// wait for all in-flight async copies on a given layer to complete
-void dyn_ex_cache_wait(struct dyn_ex_cache * cache, int layer);
-
-// ── predictor ──────────────────────────────────────────────────────────
+// ── predictor (unchanged) ──
 
 struct dyn_ex_predictor {
-    int D; // hidden size
-    int L; // n_layers
-    int E; // n_experts
-    int H; // hidden dim (default 16)
-
-    // weights (CPU, loaded from file)
-    std::vector<float> trunk_w; // [H, D]
-    std::vector<float> trunk_b; // [H]
-    std::vector<float> W1;      // [L*H*(H+E)]
-    std::vector<float> b1;      // [L*H]
-    std::vector<float> W2;      // [L*E*H]
-    std::vector<float> b2;      // [L*E]
-
-    // AdamW optimizer state
-    std::vector<float> m_trunk_w, v_trunk_w;
-    std::vector<float> m_trunk_b, v_trunk_b;
-    std::vector<float> m_W1, v_W1, m_b1, v_b1;
-    std::vector<float> m_W2, v_W2, m_b2, v_b2;
-    int step = 0; // optimizer step counter
+    int D, L, E, H;
+    std::vector<float> trunk_w, trunk_b, W1, b1, W2, b2;
+    std::vector<float> m_trunk_w, v_trunk_w, m_trunk_b, v_trunk_b;
+    std::vector<float> m_W1, v_W1, m_b1, v_b1, m_W2, v_W2, m_b2, v_b2;
+    int step = 0;
 };
 
-// load predictor weights from a binary file.
-// file format: 16-byte header (magic "DXP2\0", D, L, E, H as int32), then weights as float32 in order.
 dyn_ex_predictor * dyn_ex_predictor_load(const char * path, int D, int L, int E, int H);
 void dyn_ex_predictor_free(dyn_ex_predictor * p);
-
-// predict top-k expert IDs for the next token at a given layer.
-// ht: hidden states [n_tokens * D], CPU float32
-// Et: current expert mask [n_tokens * E], CPU float32
-// layer: current layer index (0..L-1)
-// top_k: number of experts to predict
-// top_ids: output [n_tokens * top_k], int32
-// scores: output [n_tokens * E], float32 (may be nullptr)
 void dyn_ex_predictor_predict(dyn_ex_predictor * p,
-    int n_tokens,
-    const float * ht, const float * Et, int layer, int top_k,
+    int n_tokens, const float * ht, const float * Et, int layer, int top_k,
     int * top_ids, float * scores);

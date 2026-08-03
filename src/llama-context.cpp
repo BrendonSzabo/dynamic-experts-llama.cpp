@@ -13,6 +13,7 @@
 #include "llama-ext.h"
 #include "llama.h"
 
+#include <chrono>
 #include <cinttypes>
 #include <cmath>
 #ifdef GGML_USE_CUDA
@@ -87,6 +88,15 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
     if (!pre) return true;
 
+    static double total_dma_bytes = 0;
+    auto t0 = std::chrono::steady_clock::now();
+    auto ms = [&t0]() -> double {
+        auto t1 = std::chrono::steady_clock::now();
+        double d = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        t0 = t1;
+        return d;
+    };
+
     auto * model = (const llama_model *)user_data;
     auto * de = model->dyn_ex_get_cache();
     if (!de) return true;
@@ -100,54 +110,132 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     std::vector<int32_t> ids(n_e);
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
+    double t_read = ms();
 
-    // load experts from .bin into the virtualized model tensors
     auto & layer = model->layers[il];
     auto * reader = de->reader;
-    int n_slots = de->n_slots;
+    auto & l2    = de->l2[il];
+    de->clock++;
 
-    // use tensor nb[2] for per-expert sizes — the .bin header has one dtype for all layers
-    // but Q4_K_M mixes Q4_K and Q6_K per layer, so nb[2] is the ground truth
     size_t max_size = 0;
-    if (layer.ffn_gate_exps && layer.ffn_gate_exps->nb[2] > max_size) max_size = layer.ffn_gate_exps->nb[2];
-    if (layer.ffn_up_exps   && layer.ffn_up_exps->nb[2]   > max_size) max_size = layer.ffn_up_exps->nb[2];
-    if (layer.ffn_gate_up_exps && layer.ffn_gate_up_exps->nb[2] > max_size) max_size = layer.ffn_gate_up_exps->nb[2];
-    if (layer.ffn_down_exps && layer.ffn_down_exps->nb[2] > max_size) max_size = layer.ffn_down_exps->nb[2];
+    for (int pi = 0; pi < reader->n_params; pi++) {
+        if (reader->param_size[pi] > max_size) max_size = reader->param_size[pi];
+    }
     if (max_size == 0) max_size = 1;
     std::vector<uint8_t> cpu_buf(max_size);
 
-    for (int slot = 0; slot < n_e && slot < n_slots; slot++) {
-        int eid = ids[slot];
-        if (eid < 0 || eid >= reader->n_experts) continue;
+    // Phase 1: resolve L2 slots (mutex-protected, O(1) lookup)
+    struct { int eid; int l2_slot; bool is_hit; } assignments[32];
+    int n_assign = 0;
 
-        auto write_expert = [&](ggml_tensor * t, int pi) {
-            if (!t || pi < 0 || !t->data) return;
-            size_t expert_size = t->nb[2];
-            size_t n = dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), expert_size);
-            n = n < expert_size ? n : expert_size;
-            size_t off = (size_t)slot * expert_size;
-            cudaMemcpy((char *)t->data + off, cpu_buf.data(), n, cudaMemcpyHostToDevice);
+    {
+        std::lock_guard<std::mutex> lock(de->l2_mutex);
+        for (int i = 0; i < n_e && i < de->n_l1; i++) {
+            int eid = ids[i];
+            if (eid < 0 || eid >= reader->n_experts) continue;
+
+            if (de->n_l2 > 0 && eid < (int)l2.slot_of.size()) {
+                int hit_slot = l2.slot_of[eid];
+                if (hit_slot >= 0) {
+                    l2.age[hit_slot] = de->clock;
+                    assignments[n_assign++] = { eid, hit_slot, true };
+                    continue;
+                }
+                uint64_t oldest = UINT64_MAX;
+                int victim = 0;
+                for (int s = 0; s < de->n_l2; s++) {
+                    if (l2.age[s] < oldest) { oldest = l2.age[s]; victim = s; }
+                }
+                if (l2.expert[victim] >= 0 && l2.expert[victim] < (int)l2.slot_of.size())
+                    l2.slot_of[l2.expert[victim]] = DYN_EX_SENTINEL;
+                l2.expert[victim] = eid;
+                l2.slot_of[eid] = victim;
+                l2.age[victim] = de->clock;
+                assignments[n_assign++] = { eid, victim, false };
+            } else {
+                assignments[n_assign++] = { eid, -1, false };
+            }
+        }
+    }
+    double t_p1 = ms();
+
+    // Phase 2: direct GPU copies
+    struct { int eid; int l2_slot; } l2_fill[32];
+    int n_fill = 0;
+    double t_bin = 0, t_dma = 0, dma_bytes = 0;
+
+    for (int a = 0; a < n_assign; a++) {
+        int eid   = assignments[a].eid;
+        int l2_s  = assignments[a].l2_slot;
+        bool hit  = assignments[a].is_hit;
+        int slot  = a;
+
+        auto copy = [&](ggml_tensor * t, int pi, uint8_t * l2_buf, size_t l2_sz) {
+            if (!t || pi < 0 || !t->data || !t->nb[2]) return;
+            size_t sz = t->nb[2], off = (size_t)slot * sz;
+            if (hit && l2_sz > 0) {
+                auto t0 = std::chrono::steady_clock::now();
+                cudaMemcpy((char *)t->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
+                dma_bytes += sz;
+                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            } else {
+                auto t0 = std::chrono::steady_clock::now();
+                if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
+                t_bin += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                t0 = std::chrono::steady_clock::now();
+                cudaMemcpy((char *)t->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
+                dma_bytes += sz;
+                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            }
         };
 
-        write_expert(layer.ffn_gate_exps,   de->pi_gate);
-        write_expert(layer.ffn_up_exps,     de->pi_up);
-        write_expert(layer.ffn_gate_up_exps, de->pi_gate_up);
-        write_expert(layer.ffn_down_exps,   de->pi_down);
-    }
+        copy(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up.data(), l2.gate_up_size);
+        copy(layer.ffn_gate_exps,   de->pi_gate,    l2.gate.data(),    l2.gate_size);
+        copy(layer.ffn_up_exps,     de->pi_up,      l2.up.data(),      l2.up_size);
+        copy(layer.ffn_down_exps,   de->pi_down,    l2.down.data(),    l2.down_size);
 
-    // write slot IDs to the slot_ids graph input tensor (bar->src[1])
-    // not to selected_experts (bar->src[0]) — keep expert IDs intact for get_rows/add_id
+        if (!hit && l2_s >= 0 && de->n_l2 > 0) {
+            l2_fill[n_fill++] = { eid, l2_s };
+        }
+    }
+    double t_gpu = ms();
+
+    // Phase 3: fill L2 in background from cpu_buf (already in cpu_buf from the .bin reads above)
+
+    // Phase 3: fill L2 in background from .bin (for future token reuse)
+    for (int f = 0; f < n_fill; f++) {
+        int eid = l2_fill[f].eid;
+        int l2_slot = l2_fill[f].l2_slot;
+        if (l2_slot < 0) continue;
+        if (de->pi_gate >= 0 && l2.gate_size > 0)
+            dyn_ex_read_param(reader, de->pi_gate, il, eid, l2.gate.data() + (size_t)l2_slot * l2.gate_size, l2.gate_size);
+        if (de->pi_up >= 0 && l2.up_size > 0)
+            dyn_ex_read_param(reader, de->pi_up, il, eid, l2.up.data() + (size_t)l2_slot * l2.up_size, l2.up_size);
+        if (de->pi_down >= 0 && l2.down_size > 0)
+            dyn_ex_read_param(reader, de->pi_down, il, eid, l2.down.data() + (size_t)l2_slot * l2.down_size, l2.down_size);
+        if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
+            dyn_ex_read_param(reader, de->pi_gate_up, il, eid, l2.gate_up.data() + (size_t)l2_slot * l2.gate_up_size, l2.gate_up_size);
+    }
+    double t_l2_fill = ms();
+
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
         std::vector<int32_t> slots(n_e);
-        for (int i = 0; i < n_e; i++) {
-            slots[i] = (i < n_slots) ? i : -1;
-        }
+        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? i : -1;
 #ifdef GGML_USE_CUDA
         cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
+        dma_bytes += n_e * sizeof(int32_t);
 #else
         memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
 #endif
+    }
+
+    if (il == de->n_layers - 1) {
+        total_dma_bytes += dma_bytes;
+        extern size_t ggml_cuda_get_h2d_bytes();
+        fprintf(stderr, "dyn-ex: read=%5.1f p1=%5.1f bin=%5.1f dma=%5.1f l2fill=%5.1f ms  |  expert=%.1f MB scheduler=%.1f MB\n",
+                t_read, t_p1, t_bin, t_dma, t_l2_fill,
+                total_dma_bytes / 1048576.0, ggml_cuda_get_h2d_bytes() / 1048576.0);
     }
 
     return false;
@@ -337,7 +425,7 @@ llama_context::llama_context(
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
     if (model.has_dyn_ex()) {
-        uint32_t max_b = model.dyn_ex_get_cache()->n_slots / (uint32_t)model.hparams.n_expert_used;
+        uint32_t max_b = model.dyn_ex_get_cache()->n_ubatch;
         if (max_b < 1) max_b = 1;
         cparams.n_ubatch = std::min(cparams.n_ubatch, max_b);
     }
@@ -1463,7 +1551,16 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
+    static int token_count = 0;
+    auto t_token = std::chrono::steady_clock::now();
+
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
+
+    double t_compute = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_token).count();
+
+    const char * type = ubatch.n_tokens > 1 ? "PRE" : "DEC";
+    fprintf(stderr, "dyn-ex %s #%d: compute=%5.1f ms\n",
+            type, token_count++, t_compute);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;

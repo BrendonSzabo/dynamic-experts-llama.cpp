@@ -24,6 +24,7 @@ int main(int argc, char ** argv) {
     int n_predict = 32;
     std::string dyn_ex_path;
     int dyn_ex_n_slots = 0;
+    int dyn_ex_n_l2    = 0;
     std::string dyn_ex_predictor;
 
     // parse command line arguments
@@ -67,6 +68,8 @@ int main(int argc, char ** argv) {
                 else { print_usage(argc, argv); return 1; }
             } else if (strcmp(argv[i], "--dyn-ex-l1") == 0) {
                 if (i + 1 < argc) dyn_ex_n_slots = std::stoi(argv[++i]);
+            } else if (strcmp(argv[i], "--dyn-ex-l2") == 0) {
+                if (i + 1 < argc) dyn_ex_n_l2 = std::stoi(argv[++i]);
                 else { print_usage(argc, argv); return 1; }
             } else if (strcmp(argv[i], "--dyn-ex-predictor") == 0) {
                 if (i + 1 < argc) dyn_ex_predictor = argv[++i];
@@ -99,6 +102,7 @@ int main(int argc, char ** argv) {
     model_params.n_gpu_layers = ngl;
     model_params.dyn_ex_path      = dyn_ex_path.empty() ? nullptr : dyn_ex_path.c_str();
     model_params.dyn_ex_n_slots   = dyn_ex_n_slots;
+    model_params.dyn_ex_n_l2      = dyn_ex_n_l2;
     model_params.dyn_ex_predictor = dyn_ex_predictor.empty() ? nullptr : dyn_ex_predictor.c_str();
 
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);

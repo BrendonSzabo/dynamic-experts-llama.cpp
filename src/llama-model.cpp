@@ -1069,49 +1069,94 @@ dyn_ex_cache * llama_model::dyn_ex_get_cache() const {
     return pimpl->dyn_ex;
 }
 
-void llama_model::dyn_ex_ensure_layer_ordered(int layer, const int * expert_ids, int n_ids) const {
-    dyn_ex_cache_ensure_ordered(pimpl->dyn_ex, layer, expert_ids, n_ids);
-}
-
-bool llama_model::dyn_ex_init(const char * path, int n_slots, ggml_backend_dev_t gpu_dev) {
+bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backend_dev_t gpu_dev) {
     auto * reader = dyn_ex_reader_open(path);
     if (!reader) return false;
-    pimpl->dyn_ex = dyn_ex_cache_init(reader, n_slots, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    int n_expert_used = (int)hparams.n_expert_used;
+    pimpl->dyn_ex = dyn_ex_cache_init(reader, n_l1, n_l2, n_expert_used, gpu_dev);
     if (!pimpl->dyn_ex) {
         dyn_ex_reader_close(reader);
         return false;
     }
 
+    // init L2 per-layer sizes (host memory, doesn't need GPU)
+    for (int il = 0; il < (int)layers.size(); il++) {
+        auto & L = layers[il];
+        dyn_ex_cache_set_layer_size(pimpl->dyn_ex, il,
+            L.ffn_gate_exps ? L.ffn_gate_exps->nb[2] : 0,
+            L.ffn_gate_exps ? L.ffn_gate_exps->nb[1] : 0,
+            L.ffn_up_exps ? L.ffn_up_exps->nb[2] : 0,
+            L.ffn_up_exps ? L.ffn_up_exps->nb[1] : 0,
+            L.ffn_down_exps ? L.ffn_down_exps->nb[2] : 0,
+            L.ffn_down_exps ? L.ffn_down_exps->nb[1] : 0,
+            L.ffn_gate_up_exps ? L.ffn_gate_up_exps->nb[2] : 0,
+            L.ffn_gate_up_exps ? L.ffn_gate_up_exps->nb[1] : 0);
+    }
+
     if (gpu_dev) {
         auto buft = ggml_backend_dev_buffer_type(gpu_dev);
+
+        auto max_stride = [](ggml_tensor * t) -> size_t { return t ? t->nb[2] : 0; };
+
+        auto make_l1 = [&](ggml_tensor * tmpl, const char * name) -> ggml_tensor * {
+            if (!tmpl) return nullptr;
+            auto * t = new ggml_tensor();
+            memset(t, 0, sizeof(ggml_tensor));
+            t->type  = tmpl->type;
+            t->ne[0] = tmpl->ne[0]; t->ne[1] = tmpl->ne[1]; t->ne[2] = n_l1; t->ne[3] = 1;
+            t->nb[0] = tmpl->nb[0];
+            t->nb[1] = tmpl->nb[1];
+            t->nb[2] = t->nb[1] * t->ne[1];
+            t->nb[3] = t->nb[2] * t->ne[2];
+            t->flags = GGML_TENSOR_FLAG_EXTERNAL;
+            size_t sz = ggml_nbytes(t);
+            ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, sz);
+            ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
+            ggml_set_name(t, name);
+            return t;
+        };
+
+        // find template tensors — one per quant type per family
+        ggml_tensor * gate_tmpl = nullptr, * up_tmpl = nullptr, * gate_up_tmpl = nullptr;
+        ggml_tensor * down_q4_tmpl = nullptr, * down_q6_tmpl = nullptr;
         for (auto & L : layers) {
-            auto ext_slot = [&](ggml_tensor * cpu) -> ggml_tensor * {
-                if (!cpu) return nullptr;
-                auto * t = new ggml_tensor();
-                memset(t, 0, sizeof(ggml_tensor));
-                t->type   = cpu->type;
-                t->ne[0]  = cpu->ne[0];
-                t->ne[1]  = cpu->ne[1];
-                t->ne[2]  = cpu->ne[2];
-                t->ne[3]  = 1;
-                t->nb[0]  = cpu->nb[0];
-                t->nb[1]  = cpu->nb[1];
-                t->nb[2]  = cpu->nb[2];
-                t->nb[3]  = t->nb[2] * t->ne[2];
-                t->flags  = GGML_TENSOR_FLAG_EXTERNAL;
-                size_t sz = ggml_nbytes(t);
-                ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, sz);
-                ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
-                return t;
-            };
-            if (L.ffn_gate_exps)    L.ffn_gate_exps    = ext_slot(L.ffn_gate_exps);
-            if (L.ffn_up_exps)      L.ffn_up_exps      = ext_slot(L.ffn_up_exps);
-            if (L.ffn_down_exps)    L.ffn_down_exps    = ext_slot(L.ffn_down_exps);
-            if (L.ffn_gate_up_exps) L.ffn_gate_up_exps = ext_slot(L.ffn_gate_up_exps);
+            if (!gate_tmpl && L.ffn_gate_exps) gate_tmpl = L.ffn_gate_exps;
+            if (!up_tmpl && L.ffn_up_exps) up_tmpl = L.ffn_up_exps;
+            if (!gate_up_tmpl && L.ffn_gate_up_exps) gate_up_tmpl = L.ffn_gate_up_exps;
+            if (L.ffn_down_exps) {
+                if (L.ffn_down_exps->type == GGML_TYPE_Q6_K && !down_q6_tmpl) down_q6_tmpl = L.ffn_down_exps;
+                if (L.ffn_down_exps->type == GGML_TYPE_Q4_K && !down_q4_tmpl) down_q4_tmpl = L.ffn_down_exps;
+            }
+        }
+
+        auto * l1_gate      = make_l1(gate_tmpl, "dyn-ex-l1-gate");
+        auto * l1_up        = make_l1(up_tmpl, "dyn-ex-l1-up");
+        auto * l1_gate_up   = make_l1(gate_up_tmpl, "dyn-ex-l1-gate_up");
+        auto * l1_down_q4   = make_l1(down_q4_tmpl, "dyn-ex-l1-down-q4");
+        auto * l1_down_q6   = make_l1(down_q6_tmpl, "dyn-ex-l1-down-q6");
+
+        pimpl->dyn_ex->l1_gate    = l1_gate;
+        pimpl->dyn_ex->l1_up      = l1_up;
+        pimpl->dyn_ex->l1_gate_up = l1_gate_up;
+        pimpl->dyn_ex->l1_down_q4 = l1_down_q4;
+        pimpl->dyn_ex->l1_down_q6 = l1_down_q6;
+
+        pimpl->dyn_ex->l1_stride_gate    = max_stride(l1_gate);
+        pimpl->dyn_ex->l1_stride_up      = max_stride(l1_up);
+        pimpl->dyn_ex->l1_stride_gate_up = max_stride(l1_gate_up);
+        pimpl->dyn_ex->l1_stride_down    = max_stride(l1_down_q6);
+
+        for (int il = 0; il < (int)layers.size(); il++) {
+            auto & L = layers[il];
+            if (L.ffn_gate_exps)    L.ffn_gate_exps    = l1_gate;
+            if (L.ffn_up_exps)      L.ffn_up_exps      = l1_up;
+            if (L.ffn_gate_up_exps) L.ffn_gate_up_exps = l1_gate_up;
+            if (L.ffn_down_exps)    L.ffn_down_exps    = (L.ffn_down_exps->type == GGML_TYPE_Q6_K) ? l1_down_q6 : l1_down_q4;
         }
     }
 
-    dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, nullptr, (int)hparams.n_layer(), (int)hparams.n_expert_used);
+    dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, (int)hparams.n_layer(), (int)hparams.n_expert_used);
     return true;
 }
 
@@ -2453,6 +2498,7 @@ llama_model_params llama_model_default_params() {
         /*.load_mtp                    =*/ false,
         /*.dyn_ex_path                 =*/ nullptr,
         /*.dyn_ex_n_slots              =*/ 0,
+        /*.dyn_ex_n_l2                 =*/ 0,
         /*.dyn_ex_predictor            =*/ nullptr,
     };
 

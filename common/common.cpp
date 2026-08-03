@@ -1600,6 +1600,7 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
     mparams.load_mode       = params.load_mode;
     mparams.dyn_ex_path     = params.dyn_ex_path.empty() ? nullptr : params.dyn_ex_path.c_str();
     mparams.dyn_ex_n_slots  = params.dyn_ex_n_slots;
+    mparams.dyn_ex_n_l2     = params.dyn_ex_n_l2;
     mparams.dyn_ex_predictor = params.dyn_ex_predictor.empty() ? nullptr : params.dyn_ex_predictor.c_str();
     mparams.tensor_split    = params.tensor_split;
     mparams.check_tensors   = params.check_tensors;

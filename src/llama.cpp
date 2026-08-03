@@ -370,7 +370,7 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                     break;
                 }
             }
-            if (!model->dyn_ex_init(params.dyn_ex_path, params.dyn_ex_n_slots, gpu_dev)) {
+            if (!model->dyn_ex_init(params.dyn_ex_path, params.dyn_ex_n_slots, params.dyn_ex_n_l2, gpu_dev)) {
                 LLAMA_LOG_ERROR("dyn-ex: failed to init cache\n");
                 return {-1, nullptr};
             }
