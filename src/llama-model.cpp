@@ -1157,6 +1157,7 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
     }
 
     dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, (int)hparams.n_layer(), (int)hparams.n_expert_used);
+    dyn_ex_cache_init_managed(pimpl->dyn_ex, (int)hparams.n_layer(), (int)hparams.n_expert_used, gpu_dev);
     return true;
 }
 

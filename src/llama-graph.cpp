@@ -1985,10 +1985,9 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
         bar->src[0] = selected_experts;
-        bar->src[1] = slot_ids;
+        selected_experts_mm = bar->src[1]; // managed tensor, set in init
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
-        selected_experts_mm = slot_ids;
     }
 
     cur = ggml_reshape_3d(ctx0, cur, n_embd, 1, n_tokens);

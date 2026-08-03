@@ -486,6 +486,7 @@ struct common_params {
     int32_t     dyn_ex_n_slots = 0;
     int32_t     dyn_ex_n_l2    = 0;
     std::string dyn_ex_predictor;
+    std::string trace_dir;
 
     common_cpu_params cpuparams;
     common_cpu_params cpuparams_batch;

@@ -247,10 +247,6 @@ dyn_ex_cache * dyn_ex_cache_init(
     ggml_backend_dev_t dev) {
 
     if (!reader || n_l1 < 1) return nullptr;
-    if ((n_l1 & (n_l1 - 1)) != 0) {
-        LLAMA_LOG_ERROR("dyn-ex: n_l1 must be power of 2, got %d\n", n_l1);
-        return nullptr;
-    }
 
     int n_layers  = reader->n_layers;
     int n_experts = reader->n_experts;
@@ -333,6 +329,13 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
     for (auto * hp : cache->t_barrier_host) {
         if (hp) cudaFreeHost(hp);
     }
+    for (auto * t : cache->slot_ids_tensor) {
+        if (t && t->data) cudaFreeHost(t->data);
+        delete t;
+    }
+    for (auto ev : cache->slot_events) {
+        if (ev) cudaEventDestroy((cudaEvent_t)ev);
+    }
 #endif
     delete cache->reader;
     delete cache;
@@ -352,4 +355,36 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, int n_layers, int n_exper
         cache->t_barrier.push_back(t);
         cache->t_barrier_host.push_back(nullptr);
     }
+}
+
+void dyn_ex_cache_init_managed(dyn_ex_cache * cache, int n_layers, int n_expert_used, ggml_backend_dev_t dev) {
+#ifdef GGML_USE_CUDA
+    for (int i = 0; i < n_layers; i++) {
+        // managed tensor for slot_ids: CPU writes, GPU reads
+        auto * t = new ggml_tensor();
+        memset(t, 0, sizeof(ggml_tensor));
+        t->type = GGML_TYPE_I32;
+        t->ne[0] = n_expert_used; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
+        t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * n_expert_used;
+        t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
+        size_t sz = ggml_nbytes(t);
+        cudaHostAlloc(&t->data, sz, cudaHostAllocMapped);
+        t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
+        ggml_set_name(t, "dyn-ex-slot-ids");
+        cache->slot_ids_tensor.push_back(t);
+        // link to barrier: bar->src[1] is the slot_ids tensor
+        if (i < (int)cache->t_barrier.size()) {
+            cache->t_barrier[i]->src[1] = t;
+        }
+
+        // CUDA event for signaling CPU→GPU completion
+        cudaEvent_t ev = nullptr;
+        cudaEventCreateWithFlags(&ev, cudaEventDisableTiming);
+        cache->slot_events.push_back(ev);
+    }
+    for (int i = 0; i < n_layers; i++) {
+        cache->t_barrier[i]->op_params[1] = (int32_t)(uintptr_t)cache->slot_events[i];
+    }
+    LLAMA_LOG_INFO("dyn-ex: managed memory and events initialized for %d layers\n", n_layers);
+#endif
 }

@@ -2737,6 +2737,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ));
     add_opt(common_arg(
+        {"--trace"}, "DIR",
+        "trace directory for saving per-layer hidden states and generated tokens",
+        [](common_params & params, const std::string & value) {
+            params.trace_dir = value;
+        }
+    ));
+    add_opt(common_arg(
         {"-mg", "--main-gpu"}, "INDEX",
         string_format("the GPU to use for the model (with split-mode = none), or for intermediate results and KV (with split-mode = row) (default: %d)", params.main_gpu),
         [](common_params & params, int value) {

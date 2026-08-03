@@ -111,10 +111,16 @@ struct dyn_ex_cache {
     std::vector<struct ggml_tensor *> t_barrier;
     std::vector<void *>               t_barrier_host;
 
+    // managed memory for zero-copy slot_ids (CPU writes, GPU reads via MUL_MAT_ID)
+    std::vector<struct ggml_tensor *> slot_ids_tensor;
+    std::vector<void *>               slot_events;      // cudaEvent_t per layer
+
 #ifdef GGML_USE_CUDA
-    std::mutex l2_mutex; // protects L2 eviction
+    std::mutex l2_mutex;
 #endif
 };
+
+void dyn_ex_cache_init_managed(struct dyn_ex_cache * cache, int n_layers, int n_expert_used, ggml_backend_dev_t dev);
 
 dyn_ex_cache * dyn_ex_cache_init(
     struct dyn_ex_reader * reader,

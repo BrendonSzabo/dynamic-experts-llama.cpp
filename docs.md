@@ -1,122 +1,138 @@
-# Dynamic Experts Investigation
+# Dynamic Experts
 
 ## Setup
-- Model: Qwable-3.6-35b (Qwen35MoE arch), Q4_K/Q6_K, 40 layers, 256 experts, n_expert_used=8
+- Model: Qwable-3.6-35b (Qwen35MoE arch), Q4_K_M, 40 layers, 256 experts, n_expert_used=8
 - GPU: NVIDIA GTX 1050 Ti, 4GB VRAM, compute 6.1
-- .bin file: VLLM\x02 format, 19GB, produced by convert-gguf-to-expert-binary.py
-- Flash-moe fork at /home/brad/llama.cpp-flash-moe commit 9dafe78c
-- Base commit: 8c760f5a2 (slot-ID routing fix, eval callback fix, graph reuse enabled)
+- VRAM: 1884 MB model + 5 MB KV + 63 MB recurrent + 9 MB compute ≈ 1960 MB
 
-## What Works (Flash-MoE)
-- Flash-moe produces correct output on this same GPU
-- Expert tensors on CPU, scheduler copies CPU→GPU via MoE selective copy (ggml-backend.cpp:1588)
-- Uses same MUL_MAT_ID kernel, same quantization, same dimensions
-- One-token delay: experts loaded during token T used at token T+1
+## Root Cause: Q4_K_M Mixed Quant Types
 
-## What Doesn't Work (Dyn-Ex)
-- Model produces garbage output: `!!!!!!!!!!!!!!!!` for any token count
-- Layer 0-5 gates produce valid expert IDs (e.g. [238,112,120,...])
-- Layer 6-39 gates produce [0,1,2,3,4,5,6,7] — hidden state corrupted by layer 6
+The model is Q4_K_M — a mix of Q4_K (type 12) and Q6_K (type 14) tensors per layer. 20 layers have Q4_K down_exps (589 KB/expert), 20 have Q6_K down_exps (860 KB/expert). Gate and up tensors are all Q4_K.
 
-## Attempts and Results
+The `.bin` file stores ONE dtype per param (from layer 0). The callback was using `.bin`-derived per-expert sizes, which matched the Q6_K layers but overflowed Q4_K layer tensors by 270 KB per slot → GPU buffer overflow → garbage output.
 
-### Attempt 1: Eval callback return semantics
-- Changed `return false` → `return true` for non-barrier tensors
-- Goal: preserve scheduler fused-op split boundaries
-- Result: no effect on output quality (still garbage)
-- Status: KEPT (cleaner behavior, no downside)
+**Fix**: Use `tensor->nb[2]` (the actual tensor stride) for per-expert sizing at runtime. Each layer's tensor knows its own type. Created dual L1 tensors for `down_exps` (one Q4_K, one Q6_K), assigned per-layer based on GGUF type.
 
-### Attempt 2: Graph reuse
-- Removed `graph_reuse_disable = true`
-- Goal: enable graph reuse for decode performance
-- Result: no effect on output quality, graphs reused = 17-33
-- Status: KEPT
+## Architecture: 3-Level Cache
 
-### Attempt 3: Slot-ID routing (flash-moe pattern)
-- Created separate `ggml_set_input` slot_ids tensor instead of in-place selected_experts modification
-- Goal: avoid corrupting expert IDs needed by get_rows/add_id
-- Result: no effect on output quality
-- Status: KEPT (correctness improvement for bias lookup)
+```
+L1 (GPU, global): per-layer ext_slot tensors with ne[2]=n_l1
+                  --dyn-ex-l1 N  (e.g., 8)
+                  
+L2 (Host, per-layer): per-layer host buffers, LRU eviction
+                      --dyn-ex-l2 N  (e.g., 64)
+                      O(1) lookup via slot_of[expert_id]
 
-### Attempt 4: cudaDeviceSynchronize
-- Added sync after all expert writes per layer
-- Goal: ensure GPU sees callback's cudaMemcpy writes
-- Result: no effect on output quality
-- Status: REVERTED (expensive, no benefit)
+L3 (.bin mmap): existing reader
+```
 
-### Attempt 5: ggml_backend_tensor_set for expert writes
-- Replaced raw cudaMemcpy with backend-aware tensor_set
-- Goal: write through scheduler's buffer management
-- Result: GGML_ASSERT(offset + size <= ggml_nbytes(tensor)) failed
-  - Tensor was on GPU (ext_slot EXTERNAL), nbytes check failed despite correct dimensions
-- Could NOT determine why nbytes check fails for GPU EXTERNAL tensors
-- Status: REVERTED
+**Load path**: L3 → L2 → L1 (if L2 enabled), or L3 → L1 direct (if L2=0).
 
-### Attempt 6: External buffer as src[3] for MUL_MAT_ID
-- Set src[3] = gate_exps (EXTERNAL GPU tensor) on MUL_MAT_ID nodes
-- Modified CUDA kernel to read src[3] instead of src[0] when present
-- Goal: bypass any scheduler copy by reading from known buffer
-- Result: src[0]->data == src[3]->data (same pointer) — no scheduler copy exists
-  - Model still produces garbage
-- Status: REVERTED (confirmed no copy issue)
+**Cache details**:
+- L2: per-layer, `n_l2` slots × `per_expert_bytes`, LRU eviction via `age[]` array + `slot_of[expert]` for O(1) lookup
+- Mutex-protected eviction (for future parallel loading)
+- Background L2 fill: GPU copies happen first, then L2 is populated from `.bin` for future reuse
+- `MADV_WILLNEED` on the .bin mmap for warm page cache
 
-### Attempt 7: Data verification (byte-level dump)
-- Dumped .bin expert data and GPU tensor data for all layers/slots
-- Compared byte-for-byte
-- Result: all dumps match — expert data loads correctly to GPU tensor
-- Confirmed: .bin reading works, cudaMemcpy writes correctly
+## Callback: 3-Phase Loading
 
-### Attempt 8: MUL_MAT_ID kernel parameter logging
-- Logged ne, nb, type, path (MMVQ/MMQ/MMF/FALLBACK), dst values
-- For decode (n_tokens=1): hits MMVQ single-token path (not MOE kernel)
-- Parameters: ne=[2048 512 8], nb=[144 1152 589824], schan_x=4096, srow_x=8
-- All stride calculations correct for Q4_K
-- ids=[0,1,2,3,4,5,6,7] — correct slot IDs
-- dst values look reasonable (not NaN/Inf)
-- Status: informative, no fix
+1. **Phase 1** (mutex): Resolve L2 slots, O(1) lookup, LRU eviction
+2. **Phase 2**: Load expert data from L2 (hit) or `.bin` (miss) into staging buffer, then batched `cudaMemcpy` to GPU (4 calls per layer instead of 96)
+3. **Phase 3**: Background L2 fill from staging (zero-copy for misses)
 
-### Attempt 9: Expert ID logging (callback)
-- Dumped expert IDs from selected_experts per layer
-- Layer 0-5: plausible expert IDs (e.g. [238,112,120,148,254,...])
-- Layer 6-39: all [0,1,2,3,4,5,6,7] — gate produces sequential IDs
-- Indicates hidden state corruption by layer 6
+## Managed Memory for Slot IDs
 
-### Attempt 10: CPU tensor approach (flash-moe style)
-- Version A: force CPU in create_tensor + remove ext_slot
-  - Model loads but hangs during inference (gallocr reallocation loop ~20 cycles/30s)
-- Version B: force CPU in create_tensor + keep ext_slot with CPU buffer
-  - Model loads but still hangs
-- Version C: GPU in create_tensor + ext_slot with CPU buffer
-  - Model loads but still hangs
-- Root cause: scheduler tries to allocate GPU compute buffers for CPU tensor copies,
-  but with 40 layers × 3 tensors × 4.7MB = 564MB of CPU tensors plus existing ~2GB model,
-  the 4GB GPU runs out of memory for compute buffer copies
-- Flash-moe works because of different scheduler interaction (possibly smaller
-  slot counts, different model, or different tensor layout)
-- Status: REVERTED (OOM on this hardware)
+Slot IDs were written via `cudaMemcpy` (H→D) in the callback. Replaced with `cudaHostAllocMapped` — CPU writes directly to managed memory, GPU reads via MUL_MAT_ID. Zero-copy. Eliminates one `cudaMemcpy` per layer.
 
-### Attempt 11: MUL_MAT_ID FP32 kernel test
-- Created small FP32 test: ne0=64, ne1=32, ne2=4
-- CPU FP32 vs GPU FP32: 0.000000 error (PASS)
-- CPU FP32 vs numpy: matches (PASS)
-- Confirms: MUL_MAT_ID kernel works correctly for FP32
-- Could NOT test Q4_K due to missing quantization API in public headers
-- Status: informative
+The `build_moe_ffn` graph builder no longer creates slot_ids tensors — uses pre-allocated managed tensor stored in `bar->src[1]`, set during `dyn_ex_cache_init_managed`.
 
-### Attempt 12: Tensor packing comparison
-- Compared convert-gguf-to-expert-binary.py vs flashmoe_sidecar.py
-- Dyn-ex: reshapes GGUF bytes → [n_experts, per_expert_bytes] → writes per-expert
-- Flash-moe: copies EXACT raw GGUF bytes verbatim per tensor
-- Both produce same per-expert byte content (verified by dump)
-- Status: no difference found
+CUDA events for GPU/CPU overlap were attempted but ran into stream issues. Managed memory alone eliminates the copy.
 
-## Remaining Hypotheses
-1. Q4_K dequant produces different values on GPU vs CPU at expert boundaries
-2. Stride nb[3] for virtualized tensor differs from what kernel expects
-3. Buffer type (WEIGHTS vs COMPUTE) affects how CUDA allocator handles the tensor
-4. Some model-specific issue with Qwen35MoE shared experts interacting with virtualization
+## Profiling
 
-## Test Files
-- `/tmp/mulmat_test/` — FP32 weights, input, ids, numpy expected
-- `/tmp/test_gpu_fp32` — GPU vs CPU FP32 MUL_MAT_ID test binary
-- `tools/test_mul_mat_id.cpp` — standalone test (needs CMake target)
+Per-token timing (logged every 40th layer, i.e., per token):
+
+```
+dyn-ex: read=0.0 p1=0.1 bin=5.3 dma=2.0 l2fill=0.8 ms
+dyn-ex DEC #N: compute=250 ms
+```
+
+| Phase | Time | What |
+|---|---|---|
+| read_ids | 0.0ms | GPU→CPU copy of 8 ints |
+| p1 | 0.1ms | mutex + O(1) L2 lookup |
+| bin | 0-20ms | `.bin` mmap reads (misses) |
+| dma | 1-3ms | cudaMemcpy H→D (32 small calls) |
+| l2fill | 0-2ms | Background L2 fill |
+
+Expert DMA: ~15.6 MB/token from the callback. CUDA H→D counter (in `ggml_backend_cuda_set_tensor_async`) confirms no unexpected scheduler copies.
+
+## Things Tried
+
+- **Staging buffer batching**: Reduced GPU copies from 96 to 4 per layer. Saves ~1ms vs 32 individual calls.
+- **Direct DMA from L2**: Skipping staging — hit time dropped from 7ms to 5.5ms, but miss time similar.
+- **Async GPU copies**: `cudaMemcpyAsync` + dedicated stream — added overhead, removed in favor of batched sync copies.
+- **GPU events + barrier**: Attempted `cudaStreamWaitEvent` to overlap CPU/GPU but hit stream/sync issues. Managed memory alone is sufficient.
+- **MADV_WILLNEED**: Pre-faults `.bin` pages. First-token bin time dropped from 27ms to ~10ms.
+- **CUDA graphs**: Currently disabled for dyn-ex — graph replay was 400-1500ms vs 200ms without graphs. Re-enabled after managed memory fix for testing.
+
+## Current Performance
+
+| Metric | Value |
+|---|---|
+| Per-token compute | ~250ms avg |
+| Throughput | 4-5 t/s |
+| Expert DMA | 15.6 MB/token |
+| Callback overhead | ~5-7ms/token (2-3% of total) |
+
+GPU compute (MUL_MAT_ID × 40 layers, Q4_K/Q6_K GEMV) dominates at ~240ms/token. The callback and expert loading are negligible overhead.
+
+## Trace Capture (`--trace DIR`)
+
+Saves per-token tensor states. Works without dyn-ex (CPU or GPU). Call `llama_trace_flush()` after generation to write `DIR/trace.bin`.
+
+Captured tensors per token:
+- `inp_embd` — token embeddings (model input)
+- `ffn_inp-{layer}` — hidden state after attention, before MoE (per layer)
+- `ffn_moe_out-{layer}` or `ffn_out-{layer}` — hidden state after MoE (per layer)
+- `result_norm` — final RMS norm output
+- `result_output` — logits (pre-softmax, vocab-sized)
+
+### Binary Format
+
+Single file `DIR/trace.bin`, all tokens concatenated. Each entry:
+
+```
+entry:
+  token_id  u32      token index (0, 1, 2, ...)
+  name_len  u32      length of tensor name in bytes
+  name      char[]   tensor name (not null-terminated)
+  ne[0]     u32      dimension 0 (elements)
+  ne[1]     u32      dimension 1
+  ne[2]     u32      dimension 2
+  ne[3]     u32      dimension 3
+  nbytes    u32      raw data size in bytes
+  data      u8[]     raw tensor data (row-major, dtype = tensor type)
+```
+
+Entries are buffered in memory during inference, written on `llama_trace_flush()`.
+
+### Reading with Python
+
+```python
+import struct
+
+def read_trace(path):
+    entries = []
+    with open(path, 'rb') as f:
+        while True:
+            hdr = f.read(8)
+            if len(hdr) < 8: break
+            token_id, name_len = struct.unpack('<II', hdr)
+            name = f.read(name_len).decode()
+            ne = struct.unpack('<IIII', f.read(16))
+            nbytes = struct.unpack('<I', f.read(4))[0]
+            data = f.read(nbytes)
+            entries.append({'token': token_id, 'name': name, 'ne': ne, 'data': data})
+    return entries
+```

@@ -13,9 +13,9 @@
 #include "llama-ext.h"
 #include "llama.h"
 
-#include <chrono>
 #include <cinttypes>
 #include <cmath>
+#include <cstdlib>
 #ifdef GGML_USE_CUDA
 #include <cuda_runtime.h>
 #endif
@@ -23,6 +23,8 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 //
 // llama_context
@@ -84,18 +86,73 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
     /*.n_tokens_per_seq =*/ 1,
 };
 
+static std::string g_trace_dir;
+static int g_trace_token = 0;
+struct trace_chunk { std::vector<uint8_t> data; trace_chunk * next = nullptr; };
+static trace_chunk * g_trace_head = nullptr;
+static trace_chunk * g_trace_tail = nullptr;
+void llama_trace_flush();
+
+void llama_set_trace_dir(const char * dir) {
+    if (dir) {
+        g_trace_dir = dir; g_trace_token = 0;
+        mkdir(dir, 0755);
+        atexit(llama_trace_flush);
+    }
+}
+void llama_trace_flush() {
+    if (g_trace_dir.empty() || !g_trace_head) return;
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/trace.bin", g_trace_dir.c_str());
+    FILE * fp = fopen(path, "wb");
+    if (!fp) return;
+    for (trace_chunk * c = g_trace_head; c; ) {
+        fwrite(c->data.data(), 1, c->data.size(), fp);
+        trace_chunk * next = c->next;
+        delete c; c = next;
+    }
+    g_trace_head = g_trace_tail = nullptr;
+    fclose(fp);
+}
+
+static void trace_write_tensor(ggml_tensor * t) {
+    if (g_trace_dir.empty() || !t || !t->data) return;
+    auto * c = new trace_chunk;
+    auto w32 = [&](uint32_t v) { c->data.insert(c->data.end(), (uint8_t*)&v, (uint8_t*)&v + 4); };
+    auto wbytes = [&](const void * p, size_t n) { c->data.insert(c->data.end(), (const uint8_t*)p, (const uint8_t*)p + n); };
+    w32((uint32_t)g_trace_token);
+    const char * name = t->name ? t->name : "";
+    uint32_t name_len = (uint32_t)strlen(name);
+    w32(name_len);
+    wbytes(name, name_len);
+    for (int d = 0; d < 4; d++) w32((uint32_t)t->ne[d]);
+    size_t nbytes = ggml_nbytes(t);
+    w32((uint32_t)nbytes);
+    c->data.reserve(24 + nbytes);
+    // read tensor data into the chunk
+    size_t off = c->data.size();
+    c->data.resize(off + nbytes);
+    ggml_backend_tensor_get(t, c->data.data() + off, 0, nbytes);
+    // append to linked list
+    if (!g_trace_head) g_trace_head = g_trace_tail = c;
+    else { g_trace_tail->next = c; g_trace_tail = c; }
+}
+
+static bool trace_eval_callback(ggml_tensor * t, bool ask, void * /*user_data*/) {
+    if (ask || !t || !t->data) return true;
+    const char * name = t->name;
+    if (!name || !name[0]) return true;
+
+    if (strstr(name, "inp_embd") || strstr(name, "result_norm") || strstr(name, "result_output") ||
+        strstr(name, "ffn_moe_out") || strstr(name, "ffn_out") || strstr(name, "ffn_inp")) {
+        trace_write_tensor(t);
+    }
+    return true;
+}
+
 static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
     if (!pre) return true;
-
-    static double total_dma_bytes = 0;
-    auto t0 = std::chrono::steady_clock::now();
-    auto ms = [&t0]() -> double {
-        auto t1 = std::chrono::steady_clock::now();
-        double d = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        t0 = t1;
-        return d;
-    };
 
     auto * model = (const llama_model *)user_data;
     auto * de = model->dyn_ex_get_cache();
@@ -110,7 +167,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     std::vector<int32_t> ids(n_e);
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
-    double t_read = ms();
 
     auto & layer = model->layers[il];
     auto * reader = de->reader;
@@ -124,7 +180,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (max_size == 0) max_size = 1;
     std::vector<uint8_t> cpu_buf(max_size);
 
-    // Phase 1: resolve L2 slots (mutex-protected, O(1) lookup)
     struct { int eid; int l2_slot; bool is_hit; } assignments[32];
     int n_assign = 0;
 
@@ -157,12 +212,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             }
         }
     }
-    double t_p1 = ms();
 
-    // Phase 2: direct GPU copies
     struct { int eid; int l2_slot; } l2_fill[32];
     int n_fill = 0;
-    double t_bin = 0, t_dma = 0, dma_bytes = 0;
 
     for (int a = 0; a < n_assign; a++) {
         int eid   = assignments[a].eid;
@@ -174,18 +226,10 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             if (!t || pi < 0 || !t->data || !t->nb[2]) return;
             size_t sz = t->nb[2], off = (size_t)slot * sz;
             if (hit && l2_sz > 0) {
-                auto t0 = std::chrono::steady_clock::now();
                 cudaMemcpy((char *)t->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
-                dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             } else {
-                auto t0 = std::chrono::steady_clock::now();
                 if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
-                t_bin += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-                t0 = std::chrono::steady_clock::now();
                 cudaMemcpy((char *)t->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
-                dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             }
         };
 
@@ -198,11 +242,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             l2_fill[n_fill++] = { eid, l2_s };
         }
     }
-    double t_gpu = ms();
 
-    // Phase 3: fill L2 in background from cpu_buf (already in cpu_buf from the .bin reads above)
-
-    // Phase 3: fill L2 in background from .bin (for future token reuse)
     for (int f = 0; f < n_fill; f++) {
         int eid = l2_fill[f].eid;
         int l2_slot = l2_fill[f].l2_slot;
@@ -216,26 +256,10 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
             dyn_ex_read_param(reader, de->pi_gate_up, il, eid, l2.gate_up.data() + (size_t)l2_slot * l2.gate_up_size, l2.gate_up_size);
     }
-    double t_l2_fill = ms();
 
-    ggml_tensor * dst = t->src[1];
-    if (dst && dst->data) {
-        std::vector<int32_t> slots(n_e);
-        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? i : -1;
-#ifdef GGML_USE_CUDA
-        cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
-        dma_bytes += n_e * sizeof(int32_t);
-#else
-        memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
-#endif
-    }
-
-    if (il == de->n_layers - 1) {
-        total_dma_bytes += dma_bytes;
-        extern size_t ggml_cuda_get_h2d_bytes();
-        fprintf(stderr, "dyn-ex: read=%5.1f p1=%5.1f bin=%5.1f dma=%5.1f l2fill=%5.1f ms  |  expert=%.1f MB scheduler=%.1f MB\n",
-                t_read, t_p1, t_bin, t_dma, t_l2_fill,
-                total_dma_bytes / 1048576.0, ggml_cuda_get_h2d_bytes() / 1048576.0);
+    if (il < (int)de->slot_ids_tensor.size() && de->slot_ids_tensor[il]) {
+        int32_t * slot_ptr = (int32_t *)de->slot_ids_tensor[il]->data;
+        for (int i = 0; i < n_e; i++) slot_ptr[i] = (i < de->n_l1) ? i : -1;
     }
 
     return false;
@@ -1518,6 +1542,9 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         ggml_backend_sched_reset(sched.get());
         if (model.has_dyn_ex()) {
             ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
+        } else if (!g_trace_dir.empty()) {
+            mkdir(g_trace_dir.c_str(), 0755);
+            ggml_backend_sched_set_eval_callback(sched.get(), trace_eval_callback, nullptr);
         } else {
             ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
         }
@@ -1551,16 +1578,12 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-    static int token_count = 0;
-    auto t_token = std::chrono::steady_clock::now();
-
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
 
-    double t_compute = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_token).count();
+    if (!g_trace_dir.empty()) {
+        g_trace_token++;
+    }
 
-    const char * type = ubatch.n_tokens > 1 ? "PRE" : "DEC";
-    fprintf(stderr, "dyn-ex %s #%d: compute=%5.1f ms\n",
-            type, token_count++, t_compute);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;

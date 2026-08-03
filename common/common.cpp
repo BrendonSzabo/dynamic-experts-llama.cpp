@@ -1237,6 +1237,11 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
 
     pimpl->model.reset(model);
 
+    if (!params.trace_dir.empty()) {
+        extern void llama_set_trace_dir(const char *);
+        llama_set_trace_dir(params.trace_dir.c_str());
+    }
+
     if (model_only) {
         return;
     }
