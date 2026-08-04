@@ -109,6 +109,12 @@ void CaptureCollector::launch_dma() {
         if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
         if (attr.type != cudaMemoryTypeDevice) continue;
         size_t nb = ggml_nbytes(e.tensor);
+        if (offset + nb > PINNED_BUF_SIZE) {
+            fprintf(stderr, "capture: pinned buffer overflow (%zu + %zu > %zu), disabling\n",
+                    offset, nb, PINNED_BUF_SIZE);
+            m_active = false;
+            return;
+        }
         cudaMemcpy(dst + offset, e.tensor->data, nb, cudaMemcpyDeviceToHost);
         offset += nb;
     }
