@@ -109,15 +109,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         return false;
     }
 
-    static double total_dma_bytes = 0;
-    auto t0 = std::chrono::steady_clock::now();
-    auto ms = [&t0]() -> double {
-        auto t1 = std::chrono::steady_clock::now();
-        double d = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        t0 = t1;
-        return d;
-    };
-
     ggml_tensor * src = t->src[0];
     if (!src || !src->data) return false;
 
@@ -126,7 +117,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     std::vector<int32_t> ids(n_e);
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
-    double t_read = ms();
 
     auto & layer = model->layers[il];
     auto * reader = de->reader;
@@ -200,12 +190,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             }
         }
     }
-    double t_p1 = ms();
 
-    // Phase 2: direct GPU copies
     struct { int eid; int l2_slot; } l2_fill[32];
     int n_fill = 0;
-    double t_bin = 0, t_dma = 0, dma_bytes = 0;
 
     for (int a = 0; a < n_assign; a++) {
         int eid   = assignments[a].eid;
@@ -217,18 +204,10 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
             size_t sz = tt->nb[2], off = (size_t)slot * sz;
             if (hit && l2_sz > 0) {
-                auto t0c = std::chrono::steady_clock::now();
                 cudaMemcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
-                dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
             } else {
-                auto t0c = std::chrono::steady_clock::now();
                 if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
-                t_bin += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
-                t0c = std::chrono::steady_clock::now();
                 cudaMemcpy((char *)tt->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
-                dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
             }
         };
 
@@ -241,7 +220,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             l2_fill[n_fill++] = { eid, l2_s };
         }
     }
-    double t_gpu = ms();
 
     // Phase 3: fill L2 in background for future token reuse
     for (int f = 0; f < n_fill; f++) {
@@ -257,7 +235,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
             dyn_ex_read_param(reader, de->pi_gate_up, il, eid, l2.gate_up.data() + (size_t)l2_slot * l2.gate_up_size, l2.gate_up_size);
     }
-    double t_l2_fill = ms();
 
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
@@ -265,18 +242,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? base_slot + i : -1;
 #ifdef GGML_USE_CUDA
         cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
-        dma_bytes += n_e * sizeof(int32_t);
 #else
         memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
 #endif
-    }
-
-    if (il == de->n_layers - 1) {
-        total_dma_bytes += dma_bytes;
-        extern size_t ggml_cuda_get_h2d_bytes();
-        fprintf(stderr, "dyn-ex: read=%5.1f p1=%5.1f bin=%5.1f dma=%5.1f l2fill=%5.1f ms  |  expert=%.1f MB scheduler=%.1f MB\n",
-                t_read, t_p1, t_bin, t_dma, t_l2_fill,
-                total_dma_bytes / 1048576.0, ggml_cuda_get_h2d_bytes() / 1048576.0);
     }
 
     return false;
@@ -1625,16 +1593,8 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         //LLAMA_LOG_INFO("graph set inputs time: %.3f ms\n", (ggml_time_us() - t_start_us)/1000.0);
     }
 
-    static int token_count = 0;
-    auto t_token = std::chrono::steady_clock::now();
-
     const auto status = graph_compute(res->get_gf(), ubatch.n_tokens > 1);
 
-    double t_compute = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_token).count();
-
-    const char * type = ubatch.n_tokens > 1 ? "PRE" : "DEC";
-    fprintf(stderr, "dyn-ex %s #%d: compute=%5.1f ms\n",
-            type, token_count++, t_compute);
     if (status != GGML_STATUS_SUCCESS) {
         LLAMA_LOG_ERROR("%s: failed to compute graph, compute status: %d\n", __func__, status);
         ret = status;
