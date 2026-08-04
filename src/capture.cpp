@@ -112,6 +112,9 @@ void CaptureCollector::launch_dma() {
     size_t offset = 0;
     for (auto & e : m_entries) {
         if (!e.tensor->data) continue;
+        cudaPointerAttributes attr;
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
+        if (attr.type != cudaMemoryTypeDevice) continue;
         size_t nb = ggml_nbytes(e.tensor);
         cudaMemcpyAsync(dst + offset, e.tensor->data, nb,
                         cudaMemcpyDeviceToHost, (cudaStream_t)m_stream);
@@ -138,7 +141,11 @@ void CaptureCollector::flush_current() {
 
     uint32_t n_valid = 0;
     for (auto & e : m_entries) {
-        if (e.tensor->data) n_valid++;
+        if (!e.tensor->data) continue;
+        cudaPointerAttributes attr;
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
+        if (attr.type != cudaMemoryTypeDevice) continue;
+        n_valid++;
     }
 
     write_i32(m_fp, m_token_id);
@@ -150,6 +157,9 @@ void CaptureCollector::flush_current() {
 
     for (auto & e : m_entries) {
         if (!e.tensor->data) continue;
+        cudaPointerAttributes attr;
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
+        if (attr.type != cudaMemoryTypeDevice) continue;
         size_t nb = ggml_nbytes(e.tensor);
         uint32_t name_len = (uint32_t)e.name.size();
         write_u32(m_fp, name_len);
