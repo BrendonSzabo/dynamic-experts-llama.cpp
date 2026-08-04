@@ -571,8 +571,6 @@ json server_chat_convert_anthropic_to_oai(const json & body) {
     // Handle max_tokens (required in Anthropic, but we're permissive)
     if (body.contains("max_tokens")) {
         oai_body["max_tokens"] = body.at("max_tokens");
-    } else {
-        oai_body["max_tokens"] = 4096;
     }
 
     // Pass through common params
