@@ -247,8 +247,9 @@ dyn_ex_cache * dyn_ex_cache_init(
     ggml_backend_dev_t dev) {
 
     if (!reader || n_l1 < 1) return nullptr;
-    if ((n_l1 & (n_l1 - 1)) != 0) {
-        LLAMA_LOG_ERROR("dyn-ex: n_l1 must be power of 2, got %d\n", n_l1);
+    if (n_expert_used < 1) return nullptr;
+    if (n_l1 % n_expert_used != 0) {
+        LLAMA_LOG_ERROR("dyn-ex: n_l1=%d must be a multiple of n_expert_used=%d\n", n_l1, n_expert_used);
         return nullptr;
     }
 
