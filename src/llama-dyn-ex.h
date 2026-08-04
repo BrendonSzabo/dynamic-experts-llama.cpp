@@ -4,6 +4,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -89,7 +90,6 @@ struct dyn_ex_cache {
     // slots partitioned into n_expert_used-sized contiguous groups
     struct group {
         int      base_slot;
-        uint8_t  state;
         int      layer;
         uint64_t age;
     };
@@ -98,6 +98,7 @@ struct dyn_ex_cache {
 
     int n_groups = 0;
     std::vector<group> groups;
+    std::unique_ptr<std::atomic<uint8_t>[]> group_state;
     int prev_group = -1;
     int cur_group  = -1;
 

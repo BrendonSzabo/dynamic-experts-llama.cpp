@@ -1160,11 +1160,12 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
         int n_expert_used = (int)hparams.n_expert_used;
         pimpl->dyn_ex->n_groups = n_l1 / n_expert_used;
         pimpl->dyn_ex->groups.resize(pimpl->dyn_ex->n_groups);
+        pimpl->dyn_ex->group_state.reset(new std::atomic<uint8_t>[pimpl->dyn_ex->n_groups]);
         for (int g = 0; g < pimpl->dyn_ex->n_groups; g++) {
             pimpl->dyn_ex->groups[g].base_slot = g * n_expert_used;
-            pimpl->dyn_ex->groups[g].state     = dyn_ex_cache::GROUP_FREE;
             pimpl->dyn_ex->groups[g].layer     = -1;
             pimpl->dyn_ex->groups[g].age       = 0;
+            pimpl->dyn_ex->group_state[g].store(dyn_ex_cache::GROUP_FREE, std::memory_order_relaxed);
         }
     }
 
