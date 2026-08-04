@@ -123,7 +123,12 @@ void CaptureCollector::launch_dma() {
 void CaptureCollector::sync_and_flush() {
     if (!m_active) return;
 #ifdef GGML_USE_CUDA
-    cudaStreamSynchronize((cudaStream_t)m_stream);
+    cudaError_t err = cudaStreamSynchronize((cudaStream_t)m_stream);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "capture: DMA stream error: %s, disabling capture\n", cudaGetErrorString(err));
+        m_active = false;
+        return;
+    }
 #endif
     flush_current();
 }
