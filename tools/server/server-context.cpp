@@ -976,6 +976,8 @@ private:
     int64_t t_last_load_progress_ms = 0;
 
     void destroy() {
+        if (ctx_tgt) llama_capture_flush(ctx_tgt);
+
         spec.reset();
         spec_init.reset();
 
@@ -2856,7 +2858,16 @@ private:
                 // TODO @ngxson : maybe handle n_batch == 1 here instead of inside decode()
 
                 batch_view = batch.get_view(off, n_tokens);
+
+                if (n_tokens == 1 && llama_capture_is_active(ctx_tgt)) {
+                    llama_capture_begin_token(ctx_tgt, batch_view.token[0], off);
+                }
+
                 bool ok = decode(n_batch, off, batch_view);
+
+                if (n_tokens == 1 && llama_capture_is_active(ctx_tgt)) {
+                    llama_capture_end_token(ctx_tgt);
+                }
 #ifdef DEBUG_TIMINGS
                 llama_synchronize(ctx_tgt);
 #endif
