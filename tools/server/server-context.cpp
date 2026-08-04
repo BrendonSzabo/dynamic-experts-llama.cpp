@@ -2864,15 +2864,15 @@ private:
                 }
 
                 bool ok = decode(n_batch, off, batch_view);
-
-                if (n_tokens == 1 && llama_capture_is_active(ctx_tgt)) {
-                    llama_capture_end_token(ctx_tgt);
-                }
 #ifdef DEBUG_TIMINGS
                 llama_synchronize(ctx_tgt);
 #endif
 
                 if (ok) {
+                    if (n_tokens == 1 && llama_capture_is_active(ctx_tgt)) {
+                        llama_capture_end_token(ctx_tgt);
+                    }
+
                     // move the head of the batch forward with the number of tokens we just processed
                     off_next = off + n_tokens;
 
