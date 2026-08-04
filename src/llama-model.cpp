@@ -1149,10 +1149,10 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
 
         for (int il = 0; il < (int)layers.size(); il++) {
             auto & L = layers[il];
-            if (L.ffn_gate_exps)    L.ffn_gate_exps    = l1_gate;
-            if (L.ffn_up_exps)      L.ffn_up_exps      = l1_up;
-            if (L.ffn_gate_up_exps) L.ffn_gate_up_exps = l1_gate_up;
-            if (L.ffn_down_exps)    L.ffn_down_exps    = (L.ffn_down_exps->type == GGML_TYPE_Q6_K) ? l1_down_q6 : l1_down_q4;
+            L.ffn_gate_exps    = l1_gate;
+            L.ffn_up_exps      = l1_up;
+            L.ffn_gate_up_exps = l1_gate_up;
+            L.ffn_down_exps    = (L.ffn_down_exps && L.ffn_down_exps->type == GGML_TYPE_Q6_K) ? l1_down_q6 : l1_down_q4;
         }
     }
 

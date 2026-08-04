@@ -1501,6 +1501,12 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
     }
 
+    if (model.has_dyn_ex()) {
+        ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
+    } else {
+        ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+    }
+
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
         //LLAMA_LOG_DEBUG("%s: reusing previous graph\n", __func__);
 
@@ -1516,11 +1522,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-        if (model.has_dyn_ex()) {
-            ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
-        } else {
-            ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
-        }
 
         //const auto t_start_us = ggml_time_us();
 
@@ -2584,7 +2585,10 @@ ggml_cgraph * llama_context::graph_reserve(
 
     auto * res = gf_res_reserve.get();
 
-    const auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
+    auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
+    if (model.has_dyn_ex()) {
+        gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
+    }
 
     res->reset();
 
