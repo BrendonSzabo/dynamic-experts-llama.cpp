@@ -1145,7 +1145,9 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
         pimpl->dyn_ex->l1_stride_gate    = max_stride(l1_gate);
         pimpl->dyn_ex->l1_stride_up      = max_stride(l1_up);
         pimpl->dyn_ex->l1_stride_gate_up = max_stride(l1_gate_up);
-        pimpl->dyn_ex->l1_stride_down    = max_stride(l1_down_q6);
+        pimpl->dyn_ex->l1_stride_down    = std::max(
+            l1_down_q4 ? max_stride(l1_down_q4) : 0,
+            l1_down_q6 ? max_stride(l1_down_q6) : 0);
 
         for (int il = 0; il < (int)layers.size(); il++) {
             auto & L = layers[il];
