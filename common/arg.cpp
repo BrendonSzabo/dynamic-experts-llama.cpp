@@ -2716,7 +2716,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_TENSOR_SPLIT"));
     add_opt(common_arg(
-        {"--dyn-ex"}, "FILE",
+        {"--dyn-ex", "--dyn-ex-path"}, "FILE",
         "path to VLLM\\x02 .bin file for dynamic expert offloading",
         [](common_params & params, const std::string & value) {
             params.dyn_ex_path = value;
@@ -2737,7 +2737,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ));
     add_opt(common_arg(
-        {"--capture"}, "DIR",
+        {"--capture", "--trace"}, "DIR",
         "capture per-layer activations to DIR/session.cap (fp32, CUDA async DMA)",
         [](common_params & params, const std::string & value) {
             params.capture_dir = value;
