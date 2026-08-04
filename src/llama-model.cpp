@@ -1156,6 +1156,16 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             L.ffn_gate_up_exps = l1_gate_up;
             L.ffn_down_exps    = (L.ffn_down_exps && L.ffn_down_exps->type == GGML_TYPE_Q6_K) ? l1_down_q6 : l1_down_q4;
         }
+
+        int n_expert_used = (int)hparams.n_expert_used;
+        pimpl->dyn_ex->n_groups = n_l1 / n_expert_used;
+        pimpl->dyn_ex->groups.resize(pimpl->dyn_ex->n_groups);
+        for (int g = 0; g < pimpl->dyn_ex->n_groups; g++) {
+            pimpl->dyn_ex->groups[g].base_slot = g * n_expert_used;
+            pimpl->dyn_ex->groups[g].state     = dyn_ex_cache::GROUP_FREE;
+            pimpl->dyn_ex->groups[g].layer     = -1;
+            pimpl->dyn_ex->groups[g].age       = 0;
+        }
     }
 
     dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, (int)hparams.n_layer(), (int)hparams.n_expert_used);

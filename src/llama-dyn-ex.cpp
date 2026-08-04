@@ -348,8 +348,20 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, int n_layers, int n_exper
         t->nb[0] = sizeof(int32_t); t->nb[1] = (size_t)sizeof(int32_t) * (max_el + 2);
         t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
         t->op_params[0] = i;
+        t->op_params[1] = 0;
         t->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
         cache->t_barrier.push_back(t);
         cache->t_barrier_host.push_back(nullptr);
+
+        auto * r = new ggml_tensor();
+        memset(r, 0, sizeof(ggml_tensor));
+        r->type = GGML_TYPE_I32;
+        r->ne[0] = 1; r->ne[1] = 1; r->ne[2] = 1; r->ne[3] = 1;
+        r->nb[0] = sizeof(int32_t); r->nb[1] = sizeof(int32_t); r->nb[2] = sizeof(int32_t); r->nb[3] = sizeof(int32_t);
+        r->op_params[0] = i;
+        r->op_params[1] = 1;
+        r->flags = GGML_TENSOR_FLAG_EXTERNAL | GGML_TENSOR_FLAG_COMPUTE;
+        cache->t_release.push_back(r);
+        cache->t_release_host.push_back(nullptr);
     }
 }

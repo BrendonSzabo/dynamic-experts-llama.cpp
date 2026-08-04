@@ -88,6 +88,25 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
     if (!pre) return true;
 
+    int il    = t->op_params[0];
+    int role  = t->op_params[1];
+
+    auto * model = (const llama_model *)user_data;
+    auto * de = model->dyn_ex_get_cache();
+    if (!de) return true;
+
+    if (role == 1) {
+        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
+            de->groups[de->cur_group].state = dyn_ex_cache::GROUP_FREE;
+            de->groups[de->cur_group].layer = -1;
+            if (de->on_group_release) {
+                de->on_group_release(de->cur_group, il);
+            }
+            de->cur_group = -1;
+        }
+        return false;
+    }
+
     static double total_dma_bytes = 0;
     auto t0 = std::chrono::steady_clock::now();
     auto ms = [&t0]() -> double {
@@ -97,14 +116,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         return d;
     };
 
-    auto * model = (const llama_model *)user_data;
-    auto * de = model->dyn_ex_get_cache();
-    if (!de) return true;
-
     ggml_tensor * src = t->src[0];
     if (!src || !src->data) return false;
 
-    int il = t->op_params[0];
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
 
@@ -123,6 +137,31 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     }
     if (max_size == 0) max_size = 1;
     std::vector<uint8_t> cpu_buf(max_size);
+
+    int g = -1;
+    for (int i = 0; i < de->n_groups; i++) {
+        if (de->groups[i].state == dyn_ex_cache::GROUP_FREE) {
+            g = i;
+            break;
+        }
+    }
+    if (g < 0) {
+        uint64_t oldest_age = UINT64_MAX;
+        for (int i = 0; i < de->n_groups; i++) {
+            if (de->groups[i].age < oldest_age) {
+                oldest_age = de->groups[i].age;
+                g = i;
+            }
+        }
+        if (de->groups[g].state == dyn_ex_cache::GROUP_BUSY && de->on_group_release) {
+            de->on_group_release(g, de->groups[g].layer);
+        }
+    }
+    de->groups[g].state = dyn_ex_cache::GROUP_BUSY;
+    de->groups[g].layer = il;
+    de->groups[g].age   = de->clock;
+    de->cur_group = g;
+    int base_slot = de->groups[g].base_slot;
 
     // Phase 1: resolve L2 slots (mutex-protected, O(1) lookup)
     struct { int eid; int l2_slot; bool is_hit; } assignments[32];
@@ -168,24 +207,24 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         int eid   = assignments[a].eid;
         int l2_s  = assignments[a].l2_slot;
         bool hit  = assignments[a].is_hit;
-        int slot  = a;
+        int slot  = base_slot + a;
 
-        auto copy = [&](ggml_tensor * t, int pi, uint8_t * l2_buf, size_t l2_sz) {
-            if (!t || pi < 0 || !t->data || !t->nb[2]) return;
-            size_t sz = t->nb[2], off = (size_t)slot * sz;
+        auto copy = [&](ggml_tensor * tt, int pi, uint8_t * l2_buf, size_t l2_sz) {
+            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+            size_t sz = tt->nb[2], off = (size_t)slot * sz;
             if (hit && l2_sz > 0) {
-                auto t0 = std::chrono::steady_clock::now();
-                cudaMemcpy((char *)t->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
+                auto t0c = std::chrono::steady_clock::now();
+                cudaMemcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
                 dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
             } else {
-                auto t0 = std::chrono::steady_clock::now();
+                auto t0c = std::chrono::steady_clock::now();
                 if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
-                t_bin += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-                t0 = std::chrono::steady_clock::now();
-                cudaMemcpy((char *)t->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
+                t_bin += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
+                t0c = std::chrono::steady_clock::now();
+                cudaMemcpy((char *)tt->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
                 dma_bytes += sz;
-                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                t_dma += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0c).count();
             }
         };
 
@@ -200,9 +239,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     }
     double t_gpu = ms();
 
-    // Phase 3: fill L2 in background from cpu_buf (already in cpu_buf from the .bin reads above)
-
-    // Phase 3: fill L2 in background from .bin (for future token reuse)
+    // Phase 3: fill L2 in background for future token reuse
     for (int f = 0; f < n_fill; f++) {
         int eid = l2_fill[f].eid;
         int l2_slot = l2_fill[f].l2_slot;
@@ -221,7 +258,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
         std::vector<int32_t> slots(n_e);
-        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? i : -1;
+        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? base_slot + i : -1;
 #ifdef GGML_USE_CUDA
         cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
         dma_bytes += n_e * sizeof(int32_t);
@@ -1499,6 +1536,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     auto gparams = graph_params(res, ubatch, mctx, gtype);
     if (model.has_dyn_ex()) {
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
+        gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
     }
 
     if (model.has_dyn_ex()) {
@@ -2588,6 +2626,7 @@ ggml_cgraph * llama_context::graph_reserve(
     auto gparams = graph_params(res, ubatch, mctx, ctx_type_to_graph_type(cparams.ctx_type));
     if (model.has_dyn_ex()) {
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
+        gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
     }
 
     res->reset();

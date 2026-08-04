@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <vector>
 
@@ -85,6 +86,23 @@ struct dyn_ex_cache {
     std::vector<uint64_t> l1_age;    // LRU timestamp
     std::vector<uint8_t>  l1_in_use; // 1 = pinned (for future features)
 
+    // slots partitioned into n_expert_used-sized contiguous groups
+    struct group {
+        int      base_slot;
+        uint8_t  state;
+        int      layer;
+        uint64_t age;
+    };
+    static constexpr uint8_t GROUP_FREE = 0;
+    static constexpr uint8_t GROUP_BUSY = 1;
+
+    int n_groups = 0;
+    std::vector<group> groups;
+    int prev_group = -1;
+    int cur_group  = -1;
+
+    std::function<void(int group_idx, int layer)> on_group_release;
+
     // L2: per-layer host buffers [n_layers]
     struct l2_layer {
         std::vector<uint8_t> gate;
@@ -107,9 +125,13 @@ struct dyn_ex_cache {
 
     uint64_t clock = 0;
 
-    // barriers per layer
+    // pre-MUL_MAT_ID barriers (claim + copy)
     std::vector<struct ggml_tensor *> t_barrier;
     std::vector<void *>               t_barrier_host;
+
+    // post-MUL_MAT_ID barriers (release)
+    std::vector<struct ggml_tensor *> t_release;
+    std::vector<void *>               t_release_host;
 
 #ifdef GGML_USE_CUDA
     std::mutex l2_mutex; // protects L2 eviction

@@ -1362,7 +1362,8 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     res              (params.res),
     dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
-    gf               (res->get_gf()) {
+    gf               (res->get_gf()),
+    dyn_ex_release   (params.dyn_ex_release) {
         res->set_params(params);
     }
 
@@ -2179,6 +2180,13 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
 
     cb(moe_out, "ffn_moe_out", il);
+
+    if (dyn_ex_release && il >= 0 && (size_t)il < dyn_ex_release->size() && (*dyn_ex_release)[il]) {
+        ggml_tensor * rel = (*dyn_ex_release)[il];
+        rel->op = GGML_OP_DYN_EX_BARRIER;
+        rel->src[0] = moe_out;
+        ggml_build_forward_expand(gf, rel);
+    }
 
     return moe_out;
 }
