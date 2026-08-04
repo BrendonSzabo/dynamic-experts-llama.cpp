@@ -13,6 +13,8 @@
 #include "llama-ext.h"
 #include "llama.h"
 
+#include "capture.h"
+
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
@@ -659,6 +661,11 @@ llama_context::llama_context(
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled\n", __func__);
         }
 
+        if (params.capture_dir && params.capture_dir[0]) {
+            capture_init(params.capture_dir, hparams.n_embd, llama_vocab_n_tokens(&model.vocab),
+                         hparams.n_layer_all, hparams.n_expert, hparams.n_expert_used);
+        }
+
         sched_reserve();
 
         if (!cparams.flash_attn) {
@@ -862,6 +869,7 @@ void llama_context::sched_reserve() {
 
     // reserve again with pp graph to avoid ggml-alloc reallocations during inference
     {
+        if (capture) capture->reset_entries();
         // TODO: not sure if the following graph would be worst case for multi-stream KV caches:
         //
         // auto * gf = graph_reserve(n_tokens, 1, n_tokens, mctx.get());
@@ -1407,6 +1415,33 @@ void llama_context::set_warmup(bool value) {
     //sched_need_reserve = true;
 }
 
+bool llama_context::capture_init(const char * dir, uint32_t n_embd, uint32_t n_vocab,
+                                  uint32_t n_layer, uint32_t n_experts, uint32_t n_expert_used) {
+    capture = std::make_unique<CaptureCollector>();
+    return capture->init(dir, "session.cap", n_embd, n_vocab, n_layer, n_experts, n_expert_used);
+}
+
+void llama_context::capture_begin_token(int token_id, int position) {
+    if (!capture || !capture->is_active()) return;
+    capture->begin_token(token_id, position);
+}
+
+void llama_context::capture_end_token() {
+    if (!capture || !capture->is_active()) return;
+    ggml_backend_sched_synchronize(sched.get());
+    capture->launch_dma();
+    capture->sync_and_flush();
+}
+
+void llama_context::capture_flush() {
+    if (!capture || !capture->is_active()) return;
+    capture->sync_and_flush();
+}
+
+bool llama_context::capture_is_active() const {
+    return capture && capture->is_active();
+}
+
 bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
     if (!sampler && sampling.samplers.count(seq_id) == 0) {
         return true;
@@ -1562,8 +1597,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         res->reset();
 
         ggml_backend_sched_reset(sched.get());
-
-        //const auto t_start_us = ggml_time_us();
 
         gf = model.build_graph(gparams);
 
@@ -2658,7 +2691,7 @@ llm_graph_params llama_context::graph_params(
                       const llama_ubatch & ubatch,
             const llama_memory_context_i * mctx,
                           llm_graph_type   gtype) const {
-    return {
+    llm_graph_params gparams = {
         /*.arch        =*/ model.arch,
         /*.hparams     =*/ model.hparams,
         /*.cparams     =*/ cparams,
@@ -2675,6 +2708,15 @@ llm_graph_params llama_context::graph_params(
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
     };
+
+    if (capture && capture->is_active()) {
+        CaptureCollector * cap = capture.get();
+        gparams.capture_cb = [cap](ggml_tensor * t, const char * name, int il) {
+            cap->register_tensor(t, name, il);
+        };
+    }
+
+    return gparams;
 }
 
 ggml_status llama_context::graph_compute(
@@ -3926,6 +3968,22 @@ void llama_set_warmup(llama_context * ctx, bool warmup) {
 
 void llama_synchronize(llama_context * ctx) {
     ctx->synchronize();
+}
+
+bool llama_capture_is_active(llama_context * ctx) {
+    return ctx->capture_is_active();
+}
+
+void llama_capture_begin_token(llama_context * ctx, llama_token token, int pos) {
+    ctx->capture_begin_token(token, pos);
+}
+
+void llama_capture_end_token(llama_context * ctx) {
+    ctx->capture_end_token();
+}
+
+void llama_capture_flush(llama_context * ctx) {
+    ctx->capture_flush();
 }
 
 float * llama_get_logits(llama_context * ctx) {

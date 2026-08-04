@@ -715,6 +715,8 @@ struct llm_graph_params {
     std::vector<ggml_tensor *> * dyn_ex_barrier  = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_release  = nullptr;
 
+    std::function<void(ggml_tensor *, const char *, int)> capture_cb;
+
     // return true if the "other" params would result in a graph with the same topology as with the current params
     //   having the same topology allows us to reuse the graph in some cases
     bool allow_reuse(const llm_graph_params & other) const {
@@ -938,6 +940,8 @@ struct llm_graph_context {
     std::map<llama_seq_id, llama_sampler *> samplers;
 
     const llm_graph_cb & cb_func;
+
+    std::function<void(ggml_tensor *, const char *, int)> capture_cb;
 
     llm_graph_result * res;
 

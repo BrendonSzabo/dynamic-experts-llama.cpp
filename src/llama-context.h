@@ -13,9 +13,11 @@
 
 #include <map>
 #include <vector>
+#include <memory>
 
 struct llama_model;
 class llama_batch_allocr;
+class CaptureCollector;
 
 class llama_io_read_i;
 class llama_io_write_i;
@@ -118,6 +120,13 @@ struct llama_context {
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
     void set_warmup(bool value);
+
+    bool capture_init(const char * dir, uint32_t n_embd, uint32_t n_vocab,
+                      uint32_t n_layer, uint32_t n_experts, uint32_t n_expert_used);
+    void capture_begin_token(int token_id, int position);
+    void capture_end_token();
+    void capture_flush();
+    bool capture_is_active() const;
 
     void set_adapters_lora(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
 
@@ -366,6 +375,8 @@ private:
 
     llm_graph_result_ptr gf_res_prev;
     llm_graph_result_ptr gf_res_reserve;
+
+    std::unique_ptr<CaptureCollector> capture;
 
     // host buffer for the model output (logits and embeddings)
     ggml_backend_buffer_ptr buf_output;

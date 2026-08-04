@@ -1664,6 +1664,8 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.type_k = params.cache_type_k;
     cparams.type_v = params.cache_type_v;
 
+    cparams.capture_dir = params.capture_dir.empty() ? nullptr : params.capture_dir.c_str();
+
     return cparams;
 }
 

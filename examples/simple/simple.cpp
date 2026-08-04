@@ -26,6 +26,7 @@ int main(int argc, char ** argv) {
     int dyn_ex_n_slots = 0;
     int dyn_ex_n_l2    = 0;
     std::string dyn_ex_predictor;
+    std::string capture_dir;
 
     // parse command line arguments
 
@@ -73,6 +74,9 @@ int main(int argc, char ** argv) {
                 else { print_usage(argc, argv); return 1; }
             } else if (strcmp(argv[i], "--dyn-ex-predictor") == 0) {
                 if (i + 1 < argc) dyn_ex_predictor = argv[++i];
+                else { print_usage(argc, argv); return 1; }
+            } else if (strcmp(argv[i], "--capture") == 0) {
+                if (i + 1 < argc) capture_dir = argv[++i];
                 else { print_usage(argc, argv); return 1; }
             } else {
                 // prompt starts here
@@ -134,6 +138,7 @@ int main(int argc, char ** argv) {
     ctx_params.n_batch = n_prompt;
     // enable performance counters
     ctx_params.no_perf = false;
+    ctx_params.capture_dir = capture_dir.empty() ? nullptr : capture_dir.c_str();
 
     llama_context * ctx = llama_init_from_model(model, ctx_params);
 
@@ -188,10 +193,19 @@ int main(int argc, char ** argv) {
     llama_token new_token_id;
 
     for (int n_pos = 0; n_pos + batch.n_tokens < n_prompt + n_predict; ) {
+        // capture single-token decodes (skip prefill)
+        if (batch.n_tokens == 1 && llama_capture_is_active(ctx)) {
+            llama_capture_begin_token(ctx, batch.token[0], n_pos);
+        }
+
         // evaluate the current batch with the transformer model
         if (llama_decode(ctx, batch)) {
             fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
             return 1;
+        }
+
+        if (batch.n_tokens == 1 && llama_capture_is_active(ctx)) {
+            llama_capture_end_token(ctx);
         }
 
         n_pos += batch.n_tokens;
@@ -221,6 +235,8 @@ int main(int argc, char ** argv) {
             n_decode += 1;
         }
     }
+
+    llama_capture_flush(ctx);
 
     printf("\n");
 

@@ -412,6 +412,8 @@ extern "C" {
         // a source/target/parent context
         // can be utilized in various ways, for example by sharing results or llama_memory between 2 contexts
         struct llama_context * ctx_other;
+
+        const char * capture_dir; // if set, capture per-layer per-token activations to <dir>/session.cap
     };
 
     struct llama_model_tensor_override {
@@ -1017,6 +1019,11 @@ extern "C" {
     // This is automatically done when using one of the functions below to obtain the computation results
     // and is not necessary to call it explicitly in most cases
     LLAMA_API void llama_synchronize(struct llama_context * ctx);
+
+    LLAMA_API bool   llama_capture_is_active  (struct llama_context * ctx);
+    LLAMA_API void   llama_capture_begin_token(struct llama_context * ctx, llama_token token, int pos);
+    LLAMA_API void   llama_capture_end_token  (struct llama_context * ctx);
+    LLAMA_API void   llama_capture_flush      (struct llama_context * ctx);
 
     // Token logits obtained from the last call to llama_decode()
     // The logits for which llama_batch.logits[i] != 0 are stored contiguously

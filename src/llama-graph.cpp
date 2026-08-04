@@ -1359,6 +1359,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     cross            (params.cross),
     samplers         (params.samplers),
     cb_func          (params.cb),
+    capture_cb       (params.capture_cb),
     res              (params.res),
     dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
@@ -1370,6 +1371,9 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {
         cb_func(ubatch, cur, name, il);
+    }
+    if (capture_cb) {
+        capture_cb(cur, name, il);
     }
 }
 
