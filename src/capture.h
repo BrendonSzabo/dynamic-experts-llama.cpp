@@ -37,7 +37,6 @@ private:
     FILE * m_fp = nullptr;
     bool   m_active = false;
 
-    void * m_stream = nullptr;
     uint8_t * m_pinned[2] = {nullptr, nullptr};
     int m_active_buf = 0;
 

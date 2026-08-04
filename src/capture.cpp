@@ -48,7 +48,6 @@ bool CaptureCollector::init(const char * dir, std::string filename,
         }
     }
 
-    cudaStreamCreate((cudaStream_t*)&m_stream);
     m_active = true;
     return true;
 #else
@@ -61,11 +60,6 @@ bool CaptureCollector::init(const char * dir, std::string filename,
 void CaptureCollector::close() {
     if (!m_active) return;
 #ifdef GGML_USE_CUDA
-    if (m_stream) {
-        cudaStreamSynchronize((cudaStream_t)m_stream);
-        cudaStreamDestroy((cudaStream_t)m_stream);
-        m_stream = nullptr;
-    }
     for (int i = 0; i < 2; i++) {
         if (m_pinned[i]) { cudaFreeHost(m_pinned[i]); m_pinned[i] = nullptr; }
     }
@@ -76,7 +70,6 @@ void CaptureCollector::close() {
 
 void CaptureCollector::register_tensor(ggml_tensor * t, const char * name, int il) {
     if (!m_active || !t) return;
-    // skip input/weight tensors, views, barriers
     if (t->op == GGML_OP_NONE) return;
     if (t->view_src != nullptr) return;
     if (t->op == GGML_OP_DYN_EX_BARRIER) return;
@@ -113,15 +106,10 @@ void CaptureCollector::launch_dma() {
     for (auto & e : m_entries) {
         if (!e.tensor->data) continue;
         cudaPointerAttributes attr;
-        cudaError_t err = cudaPointerGetAttributes(&attr, e.tensor->data);
-        if (err != cudaSuccess) {
-            cudaGetLastError(); // clear error state
-            continue;
-        }
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
         if (attr.type != cudaMemoryTypeDevice) continue;
         size_t nb = ggml_nbytes(e.tensor);
-        cudaMemcpyAsync(dst + offset, e.tensor->data, nb,
-                        cudaMemcpyDeviceToHost, (cudaStream_t)m_stream);
+        cudaMemcpy(dst + offset, e.tensor->data, nb, cudaMemcpyDeviceToHost);
         offset += nb;
     }
 #endif
@@ -129,14 +117,6 @@ void CaptureCollector::launch_dma() {
 
 void CaptureCollector::sync_and_flush() {
     if (!m_active) return;
-#ifdef GGML_USE_CUDA
-    cudaError_t err = cudaStreamSynchronize((cudaStream_t)m_stream);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "capture: DMA stream error: %s, disabling capture\n", cudaGetErrorString(err));
-        m_active = false;
-        return;
-    }
-#endif
     flush_current();
 }
 
@@ -147,8 +127,7 @@ void CaptureCollector::flush_current() {
     for (auto & e : m_entries) {
         if (!e.tensor->data) continue;
         cudaPointerAttributes attr;
-        cudaError_t err = cudaPointerGetAttributes(&attr, e.tensor->data);
-        if (err != cudaSuccess) { cudaGetLastError(); continue; }
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
         if (attr.type != cudaMemoryTypeDevice) continue;
         n_valid++;
     }
@@ -163,8 +142,7 @@ void CaptureCollector::flush_current() {
     for (auto & e : m_entries) {
         if (!e.tensor->data) continue;
         cudaPointerAttributes attr;
-        cudaError_t err = cudaPointerGetAttributes(&attr, e.tensor->data);
-        if (err != cudaSuccess) { cudaGetLastError(); continue; }
+        if (cudaPointerGetAttributes(&attr, e.tensor->data) != cudaSuccess) continue;
         if (attr.type != cudaMemoryTypeDevice) continue;
         size_t nb = ggml_nbytes(e.tensor);
         uint32_t name_len = (uint32_t)e.name.size();
