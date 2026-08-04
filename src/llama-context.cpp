@@ -162,7 +162,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int n_assign = 0;
 
     {
+#ifdef GGML_USE_CUDA
         std::lock_guard<std::mutex> lock(de->l2_mutex);
+#endif
         for (int i = 0; i < n_e && i < de->n_l1; i++) {
             int eid = ids[i];
             if (eid < 0 || eid >= reader->n_experts) continue;
@@ -204,10 +206,18 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
             size_t sz = tt->nb[2], off = (size_t)slot * sz;
             if (hit && l2_sz > 0) {
+#ifdef GGML_USE_CUDA
                 cudaMemcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
+#else
+                memcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz);
+#endif
             } else {
                 if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
+#ifdef GGML_USE_CUDA
                 cudaMemcpy((char *)tt->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
+#else
+                memcpy((char *)tt->data + off, cpu_buf.data(), sz);
+#endif
             }
         };
 
