@@ -11,7 +11,6 @@ struct capture_entry {
     ggml_tensor * tensor;
     std::string   name;
     int           il;
-    size_t        buf_offset;
     int64_t       ne[4];
     int           n_dims;
 };
@@ -25,8 +24,7 @@ public:
 
     void register_tensor(ggml_tensor * t, const char * name, int il);
 
-    bool   is_active() const { return m_active; }
-    size_t bytes_per_token() const { return m_bytes_per_token; }
+    bool is_active() const { return m_active; }
 
     void begin_token(int token_id, int position);
     void launch_dma();
@@ -34,13 +32,23 @@ public:
     void reset_entries();
 
 private:
+    static constexpr size_t CHUNK_SIZE = 64 * 1024 * 1024;
+
+    struct pinned_chunk {
+        uint8_t * data = nullptr;
+        size_t    used = 0;
+        pinned_chunk * next = nullptr;
+    };
+
     FILE * m_fp = nullptr;
     bool   m_active = false;
 
-    uint8_t * m_pinned[2] = {nullptr, nullptr};
-    int m_active_buf = 0;
+    void * m_stream = nullptr;
 
-    size_t m_bytes_per_token = 0;
+    pinned_chunk * m_chunk_head = nullptr;
+    pinned_chunk * m_chunk_tail = nullptr;
+    size_t m_chunk_offset = 0;
+
     std::vector<capture_entry> m_entries;
 
     int m_token_id = 0;
@@ -50,4 +58,6 @@ private:
 
     void write_header(int n_embd, int n_vocab, int n_layer, int n_experts, int n_expert_used);
     void flush_current();
+    void free_chunks();
+    uint8_t * alloc_dma_space(size_t nb);
 };
