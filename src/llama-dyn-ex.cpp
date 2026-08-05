@@ -319,14 +319,23 @@ dyn_ex_cache * dyn_ex_cache_init(
     }
 
 #ifdef GGML_USE_CUDA
-    cudaMalloc((void **)&cache->l2_slot_of_dev, cache->n_experts * sizeof(int32_t));
-    cudaMalloc((void **)&cache->l2_age_dev,     cache->n_l2      * sizeof(uint64_t));
-    cudaMalloc((void **)&cache->l2_expert_dev,  cache->n_l2      * sizeof(int32_t));
-    cudaMalloc((void **)&cache->miss_flags_dev, cache->n_l1      * sizeof(uint8_t));
-    cudaMalloc((void **)&cache->sel_experts_dev, cache->n_l1      * sizeof(int32_t));
-    cudaEventCreateWithFlags((cudaEvent_t *)&cache->slot_event, cudaEventDisableTiming);
-    cudaStreamCreateWithFlags((cudaStream_t *)&cache->h2d_stream, cudaStreamNonBlocking);
-    cudaEventCreateWithFlags((cudaEvent_t *)&cache->h2d_done, cudaEventDisableTiming);
+    cudaError_t err;
+    err = cudaHostAlloc((void **)&cache->l2_slot_of_host, cache->n_experts * sizeof(int32_t), cudaHostAllocMapped); if (err != cudaSuccess) return nullptr;
+    err = cudaHostGetDevicePointer((void **)&cache->l2_slot_of_dev, cache->l2_slot_of_host, 0); if (err != cudaSuccess) return nullptr;
+    if (cache->n_l2 > 0) {
+        err = cudaHostAlloc((void **)&cache->l2_age_host, cache->n_l2 * sizeof(uint64_t), cudaHostAllocMapped); if (err != cudaSuccess) return nullptr;
+        err = cudaHostGetDevicePointer((void **)&cache->l2_age_dev, cache->l2_age_host, 0); if (err != cudaSuccess) return nullptr;
+        err = cudaHostAlloc((void **)&cache->l2_expert_host, cache->n_l2 * sizeof(int32_t), cudaHostAllocMapped); if (err != cudaSuccess) return nullptr;
+        err = cudaHostGetDevicePointer((void **)&cache->l2_expert_dev, cache->l2_expert_host, 0); if (err != cudaSuccess) return nullptr;
+    }
+    err = cudaHostAlloc((void **)&cache->miss_flags_host, cache->n_l1 * sizeof(uint8_t), cudaHostAllocMapped); if (err != cudaSuccess) return nullptr;
+    err = cudaHostGetDevicePointer((void **)&cache->miss_flags_dev, cache->miss_flags_host, 0); if (err != cudaSuccess) return nullptr;
+    err = cudaMalloc((void **)&cache->sel_experts_dev, cache->n_l1 * sizeof(int32_t)); if (err != cudaSuccess) return nullptr;
+    memset(cache->l2_slot_of_host, 0xFF, cache->n_experts * sizeof(int32_t));
+    if (cache->n_l2 > 0)
+        memset(cache->l2_expert_host, 0xFF, cache->n_l2 * sizeof(int32_t));
+    err = cudaStreamCreateWithFlags((cudaStream_t *)&cache->h2d_stream, cudaStreamNonBlocking); if (err != cudaSuccess) return nullptr;
+    err = cudaEventCreateWithFlags((cudaEvent_t *)&cache->h2d_done, cudaEventDisableTiming); if (err != cudaSuccess) return nullptr;
 #endif
 
     cache->expert_freq.resize((size_t)n_layers * n_experts, 0);
@@ -366,18 +375,18 @@ void dyn_ex_cache_set_layer_size(
 void dyn_ex_cache_free(dyn_ex_cache * cache) {
     if (!cache) return;
 #ifdef GGML_USE_CUDA
-    for (auto * hp : cache->t_barrier_host) {
-        if (hp) cudaFreeHost(hp);
-    }
-    if (cache->l2_slot_of_dev) cudaFree(cache->l2_slot_of_dev);
-    if (cache->l2_age_dev)     cudaFree(cache->l2_age_dev);
-    if (cache->l2_expert_dev)  cudaFree(cache->l2_expert_dev);
-    if (cache->miss_flags_dev) cudaFree(cache->miss_flags_dev);
+    if (cache->l2_slot_of_host) cudaFreeHost(cache->l2_slot_of_host);
+    if (cache->l2_age_host)     cudaFreeHost(cache->l2_age_host);
+    if (cache->l2_expert_host)  cudaFreeHost(cache->l2_expert_host);
+    if (cache->miss_flags_host) cudaFreeHost(cache->miss_flags_host);
     if (cache->sel_experts_dev) cudaFree(cache->sel_experts_dev);
-    if (cache->slot_event)     cudaEventDestroy((cudaEvent_t)cache->slot_event);
-    if (cache->h2d_done)       cudaEventDestroy((cudaEvent_t)cache->h2d_done);
-    if (cache->h2d_stream)     cudaStreamDestroy((cudaStream_t)cache->h2d_stream);
+    if (cache->h2d_done)        cudaEventDestroy((cudaEvent_t)cache->h2d_done);
+    if (cache->h2d_stream)      cudaStreamDestroy((cudaStream_t)cache->h2d_stream);
+    for (auto * hp : cache->t_barrier_host) if (hp) cudaFreeHost(hp);
 #endif
+    if (!cache->t_slot_ids.empty() && cache->t_slot_ids[0] && cache->t_slot_ids[0]->buffer)
+        ggml_backend_buffer_free(cache->t_slot_ids[0]->buffer);
+    for (auto * t : cache->t_slot_ids) delete t;
     delete cache->reader;
     delete cache;
 }

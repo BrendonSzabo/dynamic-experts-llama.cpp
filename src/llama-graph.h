@@ -712,9 +712,10 @@ struct llm_graph_params {
     llm_graph_result * res;
 
     // dyn-ex: per-layer barrier tensors (nullptr = disabled)
-    std::vector<ggml_tensor *> * dyn_ex_barrier  = nullptr;
-    std::vector<ggml_tensor *> * dyn_ex_release  = nullptr;
+    std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
+    std::vector<ggml_tensor *> * dyn_ex_release = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_selected_experts = nullptr;
+    std::vector<ggml_tensor *> * dyn_ex_slot_ids = nullptr;
 
     std::function<void(ggml_tensor *, const char *, int)> capture_cb;
 
@@ -850,6 +851,7 @@ public:
     std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_release = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_selected_experts = nullptr;
+    std::vector<ggml_tensor *> * dyn_ex_slot_ids = nullptr;
 
     std::map<llama_seq_id, ggml_tensor *> t_sampled_logits;
     std::map<llama_seq_id, ggml_tensor *> t_candidates;
@@ -953,6 +955,7 @@ struct llm_graph_context {
     std::vector<ggml_tensor *> * dyn_ex_barrier = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_release = nullptr;
     std::vector<ggml_tensor *> * dyn_ex_selected_experts = nullptr;
+    std::vector<ggml_tensor *> * dyn_ex_slot_ids = nullptr;
 
     llm_graph_context(const llm_graph_params & params);
     virtual ~llm_graph_context() = default;

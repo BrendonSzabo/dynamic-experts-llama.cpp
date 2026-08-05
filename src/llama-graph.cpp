@@ -1365,7 +1365,8 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()),
     dyn_ex_release   (params.dyn_ex_release),
-    dyn_ex_selected_experts (params.dyn_ex_selected_experts) {
+    dyn_ex_selected_experts (params.dyn_ex_selected_experts),
+    dyn_ex_slot_ids         (params.dyn_ex_slot_ids) {
         res->set_params(params);
     }
 
@@ -1983,9 +1984,17 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     ggml_build_forward_expand(gf, weights);
 
     // dyn-ex: slot IDs graph input tensor for MUL_MAT_ID routing
-    ggml_tensor * slot_ids = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, n_tokens);
-    { char slot_name[64]; snprintf(slot_name, sizeof(slot_name), "ffn_moe_slot_ids-%d", il); ggml_set_name(slot_ids, slot_name); }
-    ggml_set_input(slot_ids);
+    ggml_tensor * slot_ids;
+    char slot_name[64];
+    snprintf(slot_name, sizeof(slot_name), "ffn_moe_slot_ids-%d", il);
+    if (dyn_ex_slot_ids && il >= 0 && (size_t)il < dyn_ex_slot_ids->size() && (*dyn_ex_slot_ids)[il]) {
+        ggml_tensor * base = (*dyn_ex_slot_ids)[il];
+        slot_ids = ggml_view_2d(ctx0, base, n_expert_used, n_tokens,
+                                (size_t)sizeof(int32_t) * n_expert_used, 0);
+    } else {
+        slot_ids = ggml_new_tensor_2d(ctx0, GGML_TYPE_I32, n_expert_used, n_tokens);
+    }
+    ggml_set_name(slot_ids, slot_name);
     ggml_set_output(slot_ids);
     ggml_build_forward_expand(gf, slot_ids);
 

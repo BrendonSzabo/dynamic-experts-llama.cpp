@@ -5504,22 +5504,10 @@ __global__ void dyn_ex_slot_assign_kernel(
 void dyn_ex_slot_assign_launch(
     ggml_backend_t backend,
     int32_t  * l2_slot_of_dev, uint64_t * l2_age_dev, int32_t * l2_expert_dev,
-    uint8_t * miss_flags_dev, bool * l2_state_dirty,
-    const std::vector<int32_t> & slot_of, const std::vector<uint64_t> & age,
-    const std::vector<int32_t> & expert,
-    void * slot_event,
+    uint8_t * miss_flags_dev,
     int n_experts, int n_l2,
     const int32_t * selected_experts_dev, int32_t * slot_ids_dev,
     int base_slot, int total_ids) {
-
-    // upload L2 state if dirty — batch entire arrays instead of per-expert copies
-    if (*l2_state_dirty && n_l2 > 0) {
-        cudaStream_t stream = ((ggml_backend_cuda_context *)backend->context)->stream();
-        CUDA_CHECK(cudaMemcpyAsync(l2_slot_of_dev, slot_of.data(), n_experts * sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-        CUDA_CHECK(cudaMemcpyAsync(l2_age_dev,     age.data(),     n_l2      * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
-        CUDA_CHECK(cudaMemcpyAsync(l2_expert_dev,  expert.data(),  n_l2      * sizeof(int32_t), cudaMemcpyHostToDevice, stream));
-        *l2_state_dirty = false;
-    }
 
     cudaStream_t stream = ((ggml_backend_cuda_context *)backend->context)->stream();
     int block = 256;
@@ -5529,8 +5517,6 @@ void dyn_ex_slot_assign_launch(
         l2_expert_dev, slot_ids_dev, miss_flags_dev,
         base_slot, n_experts, n_l2, total_ids);
     CUDA_CHECK(cudaGetLastError());
-
-    cudaEventRecord((cudaEvent_t)slot_event, stream);
 }
 
 __global__ void dyn_ex_barrier_kernel(

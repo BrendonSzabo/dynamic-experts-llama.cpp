@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -102,7 +103,7 @@ struct dyn_ex_cache {
     int prev_group = -1;
     int cur_group  = -1;
 
-    std::vector<int> free_groups; // LIFO freelist of free group indices (protected by l2_mutex)
+    std::deque<int> free_groups; // FIFO freelist of free group indices
 
     std::function<void(int group_idx, int layer)> on_group_release;
 
@@ -139,6 +140,7 @@ struct dyn_ex_cache {
     // per-layer selected_experts tensor pointers (avoids barrier consuming ARGSORT output,
     // which would break topk-moe fusion in ggml_can_fuse_subgraph)
     std::vector<struct ggml_tensor *> t_selected_experts;
+    std::vector<struct ggml_tensor *> t_slot_ids;
 
     // persistent staging buffer for expert weight reads (avoids per-callback heap alloc)
     std::vector<uint8_t> cpu_buf;
@@ -157,22 +159,21 @@ struct dyn_ex_cache {
     ggml_backend_t l1_backend = nullptr;
 
 #ifdef GGML_USE_CUDA
-    // GPU-side L2 state for slot-assign kernel (uploaded per barrier, ~2KB per layer)
-    int32_t  * l2_slot_of_dev = nullptr;  // [n_experts]
-    uint64_t * l2_age_dev     = nullptr;  // [n_l2]
-    int32_t  * l2_expert_dev  = nullptr;  // [n_l2]
-    uint8_t  * miss_flags_dev = nullptr;  // [n_l1] — kernel writes which experts need loading
-    int32_t  * sel_experts_dev = nullptr;  // GPU copy of selected_experts for kernel
-    bool       l2_state_dirty = true;     // CPU L2 state changed, needs re-upload
-    void     * slot_event     = nullptr;  // cudaEvent_t for kernel completion
-    void     * h2d_stream     = nullptr;  // dedicated H2D stream for overlapping copies
-    void     * h2d_done       = nullptr;  // cudaEvent_t: H2D copies finished
-
-    // per-layer expert usage frequency for pre-loading (indexed by [il * n_experts + expert])
+    // pinned mapped memory — accessible from both CPU (host ptr) and GPU (dev ptr)
+    int32_t  * l2_slot_of_host = nullptr;
+    int32_t  * l2_slot_of_dev  = nullptr;
+    uint64_t * l2_age_host     = nullptr;
+    uint64_t * l2_age_dev      = nullptr;
+    int32_t  * l2_expert_host  = nullptr;
+    int32_t  * l2_expert_dev   = nullptr;
+    uint8_t  * miss_flags_host = nullptr;
+    uint8_t  * miss_flags_dev  = nullptr;
+    int32_t  * sel_experts_dev = nullptr;
+    void     * h2d_stream      = nullptr;
+    void     * h2d_done        = nullptr;
     std::vector<uint64_t> expert_freq;
-    int                   preload_top_k = 0; // how many popular experts to pre-load (0 = disabled)
-
-    std::mutex l2_mutex; // protects L2 eviction
+    int                   preload_top_k = 0;
+    std::mutex l2_mutex;
 #endif
 };
 
@@ -180,10 +181,7 @@ struct dyn_ex_cache {
 void dyn_ex_slot_assign_launch(
     ggml_backend_t backend,
     int32_t  * l2_slot_of_dev, uint64_t * l2_age_dev, int32_t * l2_expert_dev,
-    uint8_t * miss_flags_dev, bool * l2_state_dirty,
-    const std::vector<int32_t> & slot_of, const std::vector<uint64_t> & age,
-    const std::vector<int32_t> & expert,
-    void * slot_event,
+    uint8_t * miss_flags_dev,
     int n_experts, int n_l2,
     const int32_t * selected_experts_dev, int32_t * slot_ids_dev,
     int base_slot, int total_ids);

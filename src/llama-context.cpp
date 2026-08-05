@@ -20,6 +20,7 @@
 #include <cmath>
 #ifdef GGML_USE_CUDA
 #include <cuda_runtime.h>
+#include "ggml-cuda.h"
 #endif
 #include <cstring>
 #include <limits>
@@ -132,28 +133,59 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     auto & layer = model->layers[il];
 
-    ggml_tensor * dst = t->src[1];
-    de->slots_buf.resize(n_slots);
-    for (int i = 0; i < n_slots; i++) de->slots_buf[i] = base_slot + i;
-    if (dst && dst->data)
-        ggml_backend_tensor_set(dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
+#ifdef GGML_USE_CUDA
+    ggml_tensor * slot_gpu = (il >= 0 && (size_t)il < de->t_slot_ids.size()) ? de->t_slot_ids[il] : nullptr;
+    if (slot_gpu && slot_gpu->data && de->l1_backend) {
+        cudaMemcpy(de->sel_experts_dev, de->ids_buf.data(), n_slots * sizeof(int32_t), cudaMemcpyHostToDevice);
+        dyn_ex_slot_assign_launch(de->l1_backend,
+            de->l2_slot_of_dev, de->l2_age_dev, de->l2_expert_dev, de->miss_flags_dev,
+            de->n_experts, de->n_l2,
+            de->sel_experts_dev, (int32_t *)slot_gpu->data, base_slot, n_slots);
 
-    for (int i = 0; i < n_slots; i++) {
-        int eid = de->ids_buf[i];
-        if (eid < 0 || eid >= de->reader->n_experts) continue;
-        int slot = base_slot + i;
-        auto cf = [&](ggml_tensor * tt, int pi) {
-            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-            size_t sz = tt->nb[2];
-            size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
-            if (n < sz) return;
-            if (de->l1_backend)
-                ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
-        };
-        cf(layer.ffn_gate_up_exps, de->pi_gate_up);
-        cf(layer.ffn_gate_exps,   de->pi_gate);
-        cf(layer.ffn_up_exps,     de->pi_up);
-        cf(layer.ffn_down_exps,   de->pi_down);
+        for (int i = 0; i < n_slots; i++) {
+            if (!de->miss_flags_host[i]) continue;
+            int eid = de->ids_buf[i];
+            if (eid < 0 || eid >= de->reader->n_experts) continue;
+            int slot = base_slot + i;
+            auto cf = [&](ggml_tensor * tt, int pi) {
+                if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+                size_t sz = tt->nb[2];
+                size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
+                if (n < sz) return;
+                if (de->l1_backend)
+                    ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
+            };
+            cf(layer.ffn_gate_up_exps, de->pi_gate_up);
+            cf(layer.ffn_gate_exps,   de->pi_gate);
+            cf(layer.ffn_up_exps,     de->pi_up);
+            cf(layer.ffn_down_exps,   de->pi_down);
+        }
+    } else
+#endif
+    {
+        ggml_tensor * dst = t->src[1];
+        de->slots_buf.resize(n_slots);
+        for (int i = 0; i < n_slots; i++) de->slots_buf[i] = base_slot + i;
+        if (dst && dst->data)
+            ggml_backend_tensor_set(dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
+
+        for (int i = 0; i < n_slots; i++) {
+            int eid = de->ids_buf[i];
+            if (eid < 0 || eid >= de->reader->n_experts) continue;
+            int slot = base_slot + i;
+            auto cf = [&](ggml_tensor * tt, int pi) {
+                if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+                size_t sz = tt->nb[2];
+                size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
+                if (n < sz) return;
+                if (de->l1_backend)
+                    ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
+            };
+            cf(layer.ffn_gate_up_exps, de->pi_gate_up);
+            cf(layer.ffn_gate_exps,   de->pi_gate);
+            cf(layer.ffn_up_exps,     de->pi_up);
+            cf(layer.ffn_down_exps,   de->pi_down);
+        }
     }
 
     return false;
@@ -1452,6 +1484,7 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
         gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
+        gparams.dyn_ex_slot_ids = &model.dyn_ex_get_cache()->t_slot_ids;
     }
 
     if (model.has_dyn_ex()) {
@@ -2545,6 +2578,7 @@ ggml_cgraph * llama_context::graph_reserve(
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
         gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
+        gparams.dyn_ex_slot_ids = &model.dyn_ex_get_cache()->t_slot_ids;
     }
 
     res->reset();
