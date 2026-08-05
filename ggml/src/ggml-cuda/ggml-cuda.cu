@@ -5457,18 +5457,17 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
 // writes sequential slot_ids + miss_flags. Thread 0 serializes all L2
 // mutations to avoid warp-level spinlock deadlock (n_e ≤ 64, negligible).
 __global__ void dyn_ex_slot_assign_kernel(
-    const int32_t * __restrict__ selected_experts, // [n_expert_used, n_tokens]
-    uint64_t *       __restrict__ l2_age,           // [n_l2]
-    int32_t *        __restrict__ l2_slot_of,       // [n_experts]
-    int32_t *        __restrict__ l2_expert,        // [n_l2]
-    int32_t *        __restrict__ slot_ids,          // output: [n_expert_used, n_tokens]
-    uint8_t *        __restrict__ miss_flags,        // output: [n_expert_used * n_tokens]
+    const int32_t * __restrict__ selected_experts,
+    const uint64_t * __restrict__ l2_age,
+    const int32_t * __restrict__ l2_slot_of,
+    const int32_t * __restrict__ l2_expert,
+    int32_t * __restrict__ slot_ids,
+    uint8_t * __restrict__ miss_flags,
     int base_slot,
     int n_experts,
     int n_l2,
     int total_ids) {
 
-    // thread 0: process all (token,expert) pairs, write slot_ids + miss_flags
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         for (int idx = 0; idx < total_ids; idx++) {
             int expert = selected_experts[idx];
@@ -5477,24 +5476,10 @@ __global__ void dyn_ex_slot_assign_kernel(
                 miss_flags[idx] = 0;
                 continue;
             }
-            int slot = l2_slot_of[expert];
-            if (slot >= 0) {
-                l2_age[slot] = clock64();
-                miss_flags[idx] = 0;
-            } else if (n_l2 > 0) {
-                int victim = 0;
-                uint64_t oldest = UINT64_MAX;
-                for (int s = 0; s < n_l2; s++) {
-                    if (l2_age[s] < oldest) { oldest = l2_age[s]; victim = s; }
-                }
-                int old_expert = l2_expert[victim];
-                if (old_expert >= 0) l2_slot_of[old_expert] = -1;
-                l2_expert[victim] = expert;
-                l2_slot_of[expert] = victim;
-                l2_age[victim] = clock64();
-                miss_flags[idx] = 1;
+            if (n_l2 > 0 && l2_slot_of[expert] >= 0) {
+                miss_flags[idx] = 0;  // L2 hit
             } else {
-                miss_flags[idx] = 1;
+                miss_flags[idx] = 1;  // L2 miss — CPU loads between tokens
             }
         }
     }
