@@ -105,3 +105,34 @@ Gathers per-token inference telemetry: hidden states, attention, logits, top-k e
 - **CPU drain**: After `cudaDeviceSynchronize` at token end, walk list via `cudaMemcpy`, deserialize, write to binary log file in trace directory.
 - **Memory**: Fixed-size pool (128MB). Variable-sized entries (hidden state ~320KB/token, attention smaller, top-k 32 bytes). Atomic counter tracks remaining space — graceful degradation on fill.
 - **Guard**: `#ifdef GGML_USE_CUDA` + runtime `--trace <dir>`. Zero overhead when disabled.
+
+---
+
+## Implementation Order
+
+### Phase 1 — Foundation (no correctness risk, measured speed gains)
+| # | Optimization | Files | Scope |
+|---|---|---|---|
+| 1 | FIFO Freelist | `dyn-ex.h` (+`<deque>`, +field), `model.cpp` (+`push_back` in init), `context.cpp` (claim=`pop_front`, release=`push_back`) | Replace CAS loop with O(1) deque ops. No lock. Expect ~0.5ms/token gain. |
+| 2 | Persistent Buffers | `dyn-ex.h` (+fields), `dyn-ex.cpp` (+`resize` in init) | Pre-allocate `cpu_buf`, `ids_buf`, `slots_buf`. Remove per-callback vector allocs. Expect ~3ms/token gain. |
+| 3 | Virtualized Tensors | `model-loader.cpp` (1 line: `buft = ggml_backend_cpu_buffer_type()`) | Force expert tensors to CPU. Memory optimization, no speed change. |
+| 4 | n_ubatch Doubled | `dyn-ex.cpp` (remove `/2`) | One-line change. Prefill speedup only. |
+| 5 | t_selected_experts | `graph.h` (+field in params+context), `graph.cpp` (+store in build_moe_ffn, +constructor init) | Break barrier→argsort dependency for fusion. Mild graph change, verify output unchanged. |
+
+### Phase 2 — Graph Restructuring (correctness-critical)
+| # | Optimization | Files | Scope |
+|---|---|---|---|
+| 6 | Contiguous Graph | `context.cpp` (barriers return false, non-barriers return false), `ggml-cuda.cu` (barrier on GPU) | Eliminate ~3800 subgraph boundaries. Must pair with pure CUDA loading (#8-9) for correctness. Expect ~38ms/token gain. |
+| 7 | Prefill Sequential | `context.cpp` (claim returns true when `n_e > n_expert_used`) | Prefill only — creates per-layer boundaries when multi-token. Decode stays contiguous. Safe: prefill/decode are different graphs. |
+
+### Phase 3 — Pure CUDA Loading
+| # | Optimization | Files | Scope |
+|---|---|---|---|
+| 8 | Pinned L2 | `dyn-ex.h` (+host fields), `dyn-ex.cpp` (`cudaHostAlloc`+memset), `ggml-cuda.cu` (kernel reads pinning device ptr) | GPU-accessible L2. Kernel checks L2 during inference. CPU fills between tokens. ~5KB of pinned memory per layer. |
+| 9 | GPU Kernel Hot Path | `context.cpp` (wire kernel launch in callback) | Enable dormant `dyn_ex_slot_assign_kernel`. Kernel writes slot_ids + miss_flags on GPU. Pair with pinned L2 (#8). |
+| 10 | GDS | New CUDA file + `context.cpp` (queue `cuFileRead` instead of pread) | 30x expert load speed. Requires NVMe on same PCIe switch, Pascal+ GPU. Fallback to pread+H2D if GDS unavailable. |
+
+### Phase 4 — Observability
+| # | Optimization | Files | Scope |
+|---|---|---|---|
+| 11 | Trace Gathering | New `trace.h`/`trace.cpp` + `context.cpp` (drain after token) | GPU-side linked list, atomic append. D2H drain between tokens. Guarded by `--trace <dir>`. Zero overhead when disabled. |
