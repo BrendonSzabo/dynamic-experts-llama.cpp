@@ -88,68 +88,56 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
 
 static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
+    if (!pre) return true;
+
     int il = t->op_params[0], role = t->op_params[1];
     auto * model = (const llama_model *)user_data;
     auto * de = model->dyn_ex_get_cache();
     if (!de) return true;
 
-    // release barrier: push group back to freelist on pre
     if (role == 1) {
-        if (pre && de->cur_group >= 0 && de->cur_group < de->n_groups) {
-            de->group_state[de->cur_group].store(dyn_ex_cache::GROUP_FREE, std::memory_order_release);
+        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
+            de->free_groups.push_back(de->cur_group);
             de->groups[de->cur_group].layer = -1;
             de->cur_group = -1;
         }
-        return pre ? false : true;
+        return false;
     }
 
-    // claim barrier: src[0] is selected_experts (restored dependency)
     ggml_tensor * src = t->src[0];
     if (!src || !src->data) return false;
 
-    if (pre) {
-        // claim a group via CAS, fallback to LRU eviction
-        int g = -1;
-        for (int i = 0; i < de->n_groups; i++) {
-            uint8_t expected = dyn_ex_cache::GROUP_FREE;
-            if (de->group_state[i].compare_exchange_strong(expected, dyn_ex_cache::GROUP_BUSY,
-                    std::memory_order_acquire, std::memory_order_relaxed)) {
-                g = i;
-                break;
-            }
-        }
-        if (g < 0) {
-            uint64_t oldest_age = UINT64_MAX;
-            for (int i = 0; i < de->n_groups; i++) {
-                if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
-            }
-            de->group_state[g].store(dyn_ex_cache::GROUP_BUSY, std::memory_order_release);
-        }
-        de->groups[g].layer = il;
-        de->groups[g].age   = ++de->clock;
-        de->cur_group = g;
-        return true;
-    }
-
-    // post: load expert weights into L1, write slot_ids
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
     int n_slots = n_e < de->n_l1 ? n_e : de->n_l1;
-    int base_slot = de->groups[de->cur_group].base_slot;
+
+    int g = -1;
+    if (!de->free_groups.empty()) {
+        g = de->free_groups.back();
+        de->free_groups.pop_back();
+    }
+    // fallback: should never trigger for correct pre-based batching
+    if (g < 0) {
+        uint64_t oldest_age = UINT64_MAX;
+        for (int i = 0; i < de->n_groups; i++)
+            if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
+    }
+    de->groups[g].layer = il;
+    de->groups[g].age   = ++de->clock;
+    de->cur_group = g;
+    int base_slot = de->groups[g].base_slot;
 
     de->ids_buf.resize(n_slots);
     ggml_backend_tensor_get(src, de->ids_buf.data(), 0, n_slots * sizeof(int32_t));
 
     auto & layer = model->layers[il];
 
-    // write slot_ids to dst tensor (CPU — scheduler copies to GPU at split boundary)
     ggml_tensor * dst = t->src[1];
     de->slots_buf.resize(n_slots);
     for (int i = 0; i < n_slots; i++) de->slots_buf[i] = base_slot + i;
     if (dst && dst->data)
         ggml_backend_tensor_set(dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
 
-    // load expert weights from .bin into L1 tensors
     for (int i = 0; i < n_slots; i++) {
         int eid = de->ids_buf[i];
         if (eid < 0 || eid >= de->reader->n_experts) continue;
@@ -168,7 +156,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         cf(layer.ffn_down_exps,   de->pi_down);
     }
 
-    return true;
+    return false;
 }
 
 llama_context::llama_context(
