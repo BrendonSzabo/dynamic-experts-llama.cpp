@@ -101,9 +101,8 @@ L2 arrays via `cudaHostAlloc(cudaHostAllocMapped)`. Device ptr for kernel, host 
 Gathers per-token inference telemetry: hidden states, attention, logits, top-k experts, slot assignments, output token. Uses GPU-side linked list — kernels atomically append during inference, CPU drains after token.
 
 ### Design
-- **GPU**: Pre-allocated device buffer as linked list. Kernels atomically swap head pointer, write entry. Zero CPU involvement during inference — pure device-side CAS.
+- **GPU**: Device buffer as linked list. Kernels atomically swap head pointer, write entry. Zero CPU involvement during inference — pure device-side CAS.
 - **CPU drain**: After `cudaDeviceSynchronize` at token end, walk list via `cudaMemcpy`, deserialize, write to binary log file in trace directory.
-- **Memory**: Fixed-size pool (128MB). Variable-sized entries (hidden state ~320KB/token, attention smaller, top-k 32 bytes). Atomic counter tracks remaining space — graceful degradation on fill.
 - **Guard**: `#ifdef GGML_USE_CUDA` + runtime `--trace <dir>`. Zero overhead when disabled.
 
 ---
@@ -146,6 +145,6 @@ Gathers per-token inference telemetry: hidden states, attention, logits, top-k e
 
 When dyn-ex is active, expert weight tensors (MUL_MAT_ID ops) are loaded from `.bin` at runtime — the GGUF copy is never used. Skip reading them from GGUF during model loading to speed up startup time.
 
-**Mechanism**: If `dyn_ex_n_slots > 0` and the tensor's op is `GGML_OP_MUL_MAT_ID`, skip the GGUF data read. The tensor still exists in the graph (shape needed for build), but no weight bytes are loaded from disk.
+**Mechanism**: If `dyn_ex_n_slots > 0` add `TENSOR_SKIP` to non static tensors. The tensor still exists in the graph (shape needed for build), but no weight bytes are loaded from disk.
 
-**Impact**: Saves ~15GB of disk reads during model loading. Startup time improvement only — no runtime effect.
+**Impact**: Saves ~15GB of disk reads during model loading.
