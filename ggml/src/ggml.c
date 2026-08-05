@@ -7658,19 +7658,7 @@ bool ggml_can_fuse_subgraph_ext(const struct ggml_cgraph * cgraph,
             }
         }
 
-        int cur_uses = subgraph_uses;
-
-        // count extra consumers that are DYN_EX_BARRIER nodes (non-compute ops that
-        // don't actually consume tensor data — they're host synchronization points)
-        for (int k = 0; k < cgraph->n_nodes; k++) {
-            if (k >= node_idxs[i] && k <= node_idxs[i + count - 1]) continue; // in subgraph
-            if (cgraph->nodes[k]->op != GGML_OP_DYN_EX_BARRIER) continue;
-            for (int s = 0; s < GGML_MAX_SRC; s++) {
-                if (cgraph->nodes[k]->src[s] == node) cur_uses++;
-            }
-        }
-
-        if (cur_uses != ggml_node_get_use_count(cgraph, node_idxs[i])) {
+        if (subgraph_uses != ggml_node_get_use_count(cgraph, node_idxs[i])) {
             return false;
         }
 
