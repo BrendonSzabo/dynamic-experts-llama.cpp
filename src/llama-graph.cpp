@@ -1994,6 +1994,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     if (dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
+        bar->src[0] = selected_experts;
         bar->src[1] = slot_ids;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);
