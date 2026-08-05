@@ -15,6 +15,7 @@
 
 #include "capture.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
@@ -132,6 +133,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         de->groups[g].age   = ++de->clock;
         de->cur_groups.push_back(g);
     }
+    std::sort(de->cur_groups.begin(), de->cur_groups.end());
     de->cur_group = de->cur_groups.empty() ? -1 : de->cur_groups[0];
     int base_slot = de->cur_group >= 0 ? de->groups[de->cur_group].base_slot : 0;
 
