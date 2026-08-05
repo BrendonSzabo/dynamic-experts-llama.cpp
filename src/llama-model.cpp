@@ -18,6 +18,10 @@
 #include "llama-memory-recurrent.h"
 
 #include "llama.h"
+
+#ifdef GGML_USE_CUDA
+#include <cuda_runtime.h>
+#endif
 #include "models/models.h"
 
 #include "ggml.h"
@@ -1187,6 +1191,9 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 size_t off = (size_t)il * (size_t)max_el * sizeof(int32_t);
                 ggml_backend_tensor_alloc(buf, t, (char *)ggml_backend_buffer_get_base(buf) + off);
                 pimpl->dyn_ex->t_slot_ids[il] = t;
+#ifdef GGML_USE_CUDA
+                cudaMemset((char *)ggml_backend_buffer_get_base(buf) + off, 0, max_el * sizeof(int32_t));
+#endif
             }
         }
     }
