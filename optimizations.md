@@ -141,14 +141,11 @@ Gathers per-token inference telemetry: hidden states, attention, logits, top-k e
 
 ## After the Rest Works
 
-#### 12. Skip Expert Tensor Loading When Dyn-Ex Active
+#### 12. Skip Expert Tensor Loading During Startup
 **Files**: `llama-model-loader.cpp`
 
-When dyn-ex is enabled, expert weight tensors (MUL_MAT_ID ops) are never used — `.bin` provides weights at runtime. Skip loading them from GGUF entirely. The tensor metadata is still created (graph needs the shape), but the weight data stays on disk.
+When dyn-ex is active, expert weight tensors (MUL_MAT_ID ops) are loaded from `.bin` at runtime — the GGUF copy is never used. Skip reading them from GGUF during model loading to speed up startup time.
 
-**Mechanism**: In `create_tensor`, if `dyn_ex_n_slots > 0` and the tensor's op is `GGML_OP_MUL_MAT_ID`, return a zero-data placeholder tensor. Don't read from GGUF. Don't allocate buffer for weights. The scheduler sees a tensor with `ne[2]=n_l1` but no buffer — allocates GPU memory for the L1 tensor later in `dyn_ex_init`.
+**Mechanism**: If `dyn_ex_n_slots > 0` and the tensor's op is `GGML_OP_MUL_MAT_ID`, skip the GGUF data read. The tensor still exists in the graph (shape needed for build), but no weight bytes are loaded from disk.
 
-**Impact**:
-- Model load time: skip ~15GB of expert weight reads from GGUF
-- Memory: don't hold unused expert weight data in RAM after load
-- Already partially done: virtualized tensor change forces CPU buffer type. This extends it to skip the data load entirely.
+**Impact**: Saves ~15GB of disk reads during model loading. Startup time improvement only — no runtime effect.
