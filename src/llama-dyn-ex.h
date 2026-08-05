@@ -102,6 +102,8 @@ struct dyn_ex_cache {
     int prev_group = -1;
     int cur_group  = -1;
 
+    std::vector<int> free_groups; // LIFO freelist of free group indices (protected by l2_mutex)
+
     std::function<void(int group_idx, int layer)> on_group_release;
 
     // L2: per-layer host buffers [n_layers]
@@ -134,10 +136,57 @@ struct dyn_ex_cache {
     std::vector<struct ggml_tensor *> t_release;
     std::vector<void *>               t_release_host;
 
+    // per-layer selected_experts tensor pointers (avoids barrier consuming ARGSORT output,
+    // which would break topk-moe fusion in ggml_can_fuse_subgraph)
+    std::vector<struct ggml_tensor *> t_selected_experts;
+
+    // persistent staging buffer for expert weight reads (avoids per-callback heap alloc)
+    std::vector<uint8_t> cpu_buf;
+    std::vector<uint8_t> cpu_buf2;  // double-buffer for overlapped H2D
+
+    // persistent buffers for per-barrier IDs and slot assignment
+    std::vector<int32_t> ids_buf;
+    std::vector<int32_t> slots_buf;
+    std::vector<int>       assign_eid;
+    std::vector<int>       assign_l2_slot;
+    std::vector<bool>      assign_hit;
+    std::vector<int>       l2_fill_eid;
+    std::vector<int>       l2_fill_slot;
+
+    // scheduler's CUDA backend for async L1 uploads (populated at context init)
+    ggml_backend_t l1_backend = nullptr;
+
 #ifdef GGML_USE_CUDA
+    // GPU-side L2 state for slot-assign kernel (uploaded per barrier, ~2KB per layer)
+    int32_t  * l2_slot_of_dev = nullptr;  // [n_experts]
+    uint64_t * l2_age_dev     = nullptr;  // [n_l2]
+    int32_t  * l2_expert_dev  = nullptr;  // [n_l2]
+    uint8_t  * miss_flags_dev = nullptr;  // [n_l1] — kernel writes which experts need loading
+    int32_t  * sel_experts_dev = nullptr;  // GPU copy of selected_experts for kernel
+    bool       l2_state_dirty = true;     // CPU L2 state changed, needs re-upload
+    void     * slot_event     = nullptr;  // cudaEvent_t for kernel completion
+    void     * h2d_stream     = nullptr;  // dedicated H2D stream for overlapping copies
+    void     * h2d_done       = nullptr;  // cudaEvent_t: H2D copies finished
+
+    // per-layer expert usage frequency for pre-loading (indexed by [il * n_experts + expert])
+    std::vector<uint64_t> expert_freq;
+    int                   preload_top_k = 0; // how many popular experts to pre-load (0 = disabled)
+
     std::mutex l2_mutex; // protects L2 eviction
 #endif
 };
+
+// GPU slot-assign kernel — defined in ggml-cuda.cu, called from eval callback
+void dyn_ex_slot_assign_launch(
+    ggml_backend_t backend,
+    int32_t  * l2_slot_of_dev, uint64_t * l2_age_dev, int32_t * l2_expert_dev,
+    uint8_t * miss_flags_dev, bool * l2_state_dirty,
+    const std::vector<int32_t> & slot_of, const std::vector<uint64_t> & age,
+    const std::vector<int32_t> & expert,
+    void * slot_event,
+    int n_experts, int n_l2,
+    const int32_t * selected_experts_dev, int32_t * slot_ids_dev,
+    int base_slot, int total_ids);
 
 dyn_ex_cache * dyn_ex_cache_init(
     struct dyn_ex_reader * reader,

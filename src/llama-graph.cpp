@@ -1364,7 +1364,8 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()),
-    dyn_ex_release   (params.dyn_ex_release) {
+    dyn_ex_release   (params.dyn_ex_release),
+    dyn_ex_selected_experts (params.dyn_ex_selected_experts) {
         res->set_params(params);
     }
 
@@ -1934,6 +1935,10 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
     cb(selected_experts, "ffn_moe_topk", il);
 
+    if (dyn_ex_selected_experts && il >= 0 && (size_t)il < dyn_ex_selected_experts->size()) {
+        (*dyn_ex_selected_experts)[il] = selected_experts;
+    }
+
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
         // TODO: Use scalar div instead when/if implemented
         ggml_tensor * f_sel = ggml_cast(ctx0, selected_experts, GGML_TYPE_F32);
@@ -1989,7 +1994,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     if (dyn_ex_barrier && il >= 0 && (size_t)il < dyn_ex_barrier->size() && (*dyn_ex_barrier)[il]) {
         ggml_tensor * bar = (*dyn_ex_barrier)[il];
         bar->op = GGML_OP_DYN_EX_BARRIER;
-        bar->src[0] = selected_experts;
         bar->src[1] = slot_ids;
         ggml_build_forward_expand(gf, bar);
         cb(bar, "ffn_moe_barrier", il);

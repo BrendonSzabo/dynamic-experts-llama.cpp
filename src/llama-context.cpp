@@ -18,8 +18,12 @@
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
+#include <algorithm>
+#include <functional>
+#include <utility>
 #ifdef GGML_USE_CUDA
 #include <cuda_runtime.h>
+#define CUDA_CHK(x) do { cudaError_t _e = (x); GGML_ASSERT(_e == cudaSuccess); } while(0)
 #endif
 #include <cstring>
 #include <limits>
@@ -87,177 +91,92 @@ static const llm_fused_op_probe llm_fused_op_dsv4_hc_post_probe = {
 };
 
 static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
-    if (t->op != GGML_OP_DYN_EX_BARRIER) return true;
-    if (!pre) return true;
-
-    int il    = t->op_params[0];
-    int role  = t->op_params[1];
-
+    if (t->op != GGML_OP_DYN_EX_BARRIER) return false;
+    int il = t->op_params[0], role = t->op_params[1];
     auto * model = (const llama_model *)user_data;
     auto * de = model->dyn_ex_get_cache();
     if (!de) return true;
 
     if (role == 1) {
-        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
-            de->group_state[de->cur_group].store(dyn_ex_cache::GROUP_FREE, std::memory_order_release);
-            de->groups[de->cur_group].layer = -1;
-            if (de->on_group_release) {
-                de->on_group_release(de->cur_group, il);
-            }
+        if (pre && de->cur_group >= 0) {
+            { std::lock_guard<std::mutex> lk(de->l2_mutex);
+              de->free_groups.push_back(de->cur_group); }
             de->cur_group = -1;
         }
-        return false;
+        return pre ? false : true;
     }
-
-    ggml_tensor * src = t->src[0];
-    if (!src || !src->data) return false;
-
-    int n_e = (int)(src->ne[0] * src->ne[1]);
-    if (n_e <= 0) return false;
-
-    std::vector<int32_t> ids(n_e);
-    ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
 
     auto & layer = model->layers[il];
-    auto * reader = de->reader;
-    auto & l2    = de->l2[il];
-    de->clock++;
 
-    size_t max_size = 0;
-    for (int pi = 0; pi < reader->n_params; pi++) {
-        if (reader->param_size[pi] > max_size) max_size = reader->param_size[pi];
-    }
-    if (max_size == 0) max_size = 1;
-    std::vector<uint8_t> cpu_buf(max_size);
+    // skip layers where selected_experts was never set (non-MoE or pre-dense layers)
+    ggml_tensor * src = de->t_selected_experts[il];
+    fprintf(stderr, "CALLBACK il=%d role=%d pre=%d src=%p src_data=%p has_gate_up=%d has_gate=%d\n",
+        il, role, (int)pre, (void*)src, src ? src->data : nullptr,
+        layer.ffn_gate_up_exps ? 1 : 0, layer.ffn_gate_exps ? 1 : 0);
+    if (!src || !src->data) return false;
+    int n_e = (int)(src->ne[0] * src->ne[1]);
+    if (n_e <= 0) return false;
+    int n_slots = n_e < de->n_l1 ? n_e : de->n_l1;
 
-    int g = -1;
-    for (int i = 0; i < de->n_groups; i++) {
-        uint8_t expected = dyn_ex_cache::GROUP_FREE;
-        if (de->group_state[i].compare_exchange_strong(expected, dyn_ex_cache::GROUP_BUSY,
-                std::memory_order_acquire, std::memory_order_relaxed)) {
-            g = i;
-            break;
+    if (pre) {
+        int g = -1;
+        { std::lock_guard<std::mutex> lk(de->l2_mutex);
+          if (!de->free_groups.empty()) { g = de->free_groups.back(); de->free_groups.pop_back(); }
+          else { uint64_t old = UINT64_MAX; for (int i=0;i<de->n_groups;i++) if (de->groups[i].age<old) {old=de->groups[i].age;g=i;} }
         }
+        de->cur_group = g;
+        return true;  // boundary — post does the work
     }
-    if (g < 0) {
-        uint64_t oldest_age = UINT64_MAX;
-        for (int i = 0; i < de->n_groups; i++) {
-            if (de->groups[i].age < oldest_age) {
-                oldest_age = de->groups[i].age;
-                g = i;
-            }
+
+    // post: selected_experts is now computed. D2H read it, launch kernel, queue H2D
+    de->ids_buf.resize(n_slots);
+        ggml_backend_tensor_get(src, de->ids_buf.data(), 0, n_slots * sizeof(int32_t));
+        if (il == 20) {
+            auto *gt = layer.ffn_gate_exps;
+            auto *dt = layer.ffn_down_exps;
+            fprintf(stderr, "L1 il=%d gate ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%s\n",
+                il, (long long)gt->ne[0],(long long)gt->ne[1],(long long)gt->ne[2],
+                (size_t)gt->nb[0],(size_t)gt->nb[1],(size_t)gt->nb[2], ggml_type_name(gt->type));
+            fprintf(stderr, "L1 il=%d down ne=[%lld,%lld,%lld] nb=[%zu,%zu,%zu] type=%s\n",
+                il, (long long)dt->ne[0],(long long)dt->ne[1],(long long)dt->ne[2],
+                (size_t)dt->nb[0],(size_t)dt->nb[1],(size_t)dt->nb[2], ggml_type_name(dt->type));
         }
-        de->group_state[g].store(dyn_ex_cache::GROUP_BUSY, std::memory_order_release);
-        if (de->on_group_release) {
-            de->on_group_release(g, de->groups[g].layer);
-        }
-    }
-    de->groups[g].layer = il;
-    de->groups[g].age   = de->clock;
-    de->cur_group = g;
-    int base_slot = de->groups[g].base_slot;
+    fprintf(stderr, "POST il=%d n_slots=%d experts=[", il, n_slots);
+    for (int i=0;i<8&&i<n_slots;i++) fprintf(stderr, "%d,", de->ids_buf[i]);
+    fprintf(stderr, "]\n");
 
-    // Phase 1: resolve L2 slots (mutex-protected, O(1) lookup)
-    struct { int eid; int l2_slot; bool is_hit; } assignments[32];
-    int n_assign = 0;
+    // H2D expert IDs to GPU for kernel
+    cudaMemcpyAsync(de->sel_experts_dev, de->ids_buf.data(), n_slots * sizeof(int32_t),
+        cudaMemcpyHostToDevice, (cudaStream_t)de->h2d_stream);
+    cudaStreamSynchronize((cudaStream_t)de->h2d_stream);
 
-    {
-#ifdef GGML_USE_CUDA
-        std::lock_guard<std::mutex> lock(de->l2_mutex);
-#endif
-        for (int i = 0; i < n_e && i < de->n_l1; i++) {
-            int eid = ids[i];
-            if (eid < 0 || eid >= reader->n_experts) continue;
-
-            if (de->n_l2 > 0 && eid < (int)l2.slot_of.size()) {
-                int hit_slot = l2.slot_of[eid];
-                if (hit_slot >= 0) {
-                    l2.age[hit_slot] = de->clock;
-                    assignments[n_assign++] = { eid, hit_slot, true };
-                    continue;
-                }
-                uint64_t oldest = UINT64_MAX;
-                int victim = 0;
-                for (int s = 0; s < de->n_l2; s++) {
-                    if (l2.age[s] < oldest) { oldest = l2.age[s]; victim = s; }
-                }
-                if (l2.expert[victim] >= 0 && l2.expert[victim] < (int)l2.slot_of.size())
-                    l2.slot_of[l2.expert[victim]] = DYN_EX_SENTINEL;
-                l2.expert[victim] = eid;
-                l2.slot_of[eid] = victim;
-                l2.age[victim] = de->clock;
-                assignments[n_assign++] = { eid, victim, false };
-            } else {
-                assignments[n_assign++] = { eid, -1, false };
-            }
-        }
-    }
-
-    struct { int eid; int l2_slot; } l2_fill[32];
-    int n_fill = 0;
-
-    for (int a = 0; a < n_assign; a++) {
-        int eid   = assignments[a].eid;
-        int l2_s  = assignments[a].l2_slot;
-        bool hit  = assignments[a].is_hit;
-        int slot  = base_slot + a;
-
-        auto copy = [&](ggml_tensor * tt, int pi, uint8_t * l2_buf, size_t l2_sz) {
-            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-            size_t sz = tt->nb[2], off = (size_t)slot * sz;
-            if (hit && l2_sz > 0) {
-#ifdef GGML_USE_CUDA
-                cudaMemcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
-#else
-                memcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz);
-#endif
-            } else {
-                if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
-#ifdef GGML_USE_CUDA
-                cudaMemcpy((char *)tt->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
-#else
-                memcpy((char *)tt->data + off, cpu_buf.data(), sz);
-#endif
-            }
-        };
-
-        copy(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up.data(), l2.gate_up_size);
-        copy(layer.ffn_gate_exps,   de->pi_gate,    l2.gate.data(),    l2.gate_size);
-        copy(layer.ffn_up_exps,     de->pi_up,      l2.up.data(),      l2.up_size);
-        copy(layer.ffn_down_exps,   de->pi_down,    l2.down.data(),    l2.down_size);
-
-        if (!hit && l2_s >= 0 && de->n_l2 > 0) {
-            l2_fill[n_fill++] = { eid, l2_s };
-        }
-    }
-
-    // Phase 3: fill L2 in background for future token reuse
-    for (int f = 0; f < n_fill; f++) {
-        int eid = l2_fill[f].eid;
-        int l2_slot = l2_fill[f].l2_slot;
-        if (l2_slot < 0) continue;
-        if (de->pi_gate >= 0 && l2.gate_size > 0)
-            dyn_ex_read_param(reader, de->pi_gate, il, eid, l2.gate.data() + (size_t)l2_slot * l2.gate_size, l2.gate_size);
-        if (de->pi_up >= 0 && l2.up_size > 0)
-            dyn_ex_read_param(reader, de->pi_up, il, eid, l2.up.data() + (size_t)l2_slot * l2.up_size, l2.up_size);
-        if (de->pi_down >= 0 && l2.down_size > 0)
-            dyn_ex_read_param(reader, de->pi_down, il, eid, l2.down.data() + (size_t)l2_slot * l2.down_size, l2.down_size);
-        if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
-            dyn_ex_read_param(reader, de->pi_gate_up, il, eid, l2.gate_up.data() + (size_t)l2_slot * l2.gate_up_size, l2.gate_up_size);
-    }
-
+    // TEMP: use CPU loading directly (no GPU kernel) to test correctness
+    de->slots_buf.resize(n_slots);
+    for (int i = 0; i < n_slots && i < de->n_l1; i++) de->slots_buf[i] = i;
     ggml_tensor * dst = t->src[1];
-    if (dst && dst->data) {
-        std::vector<int32_t> slots(n_e);
-        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? base_slot + i : -1;
-#ifdef GGML_USE_CUDA
-        cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
-#else
-        memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
-#endif
+    fprintf(stderr, "  dst=%p data=%p buf=%p is_host=%d\n",
+        (void*)dst, dst?dst->data:0, dst&&dst->buffer?(void*)dst->buffer:0,
+        dst&&dst->buffer ? ggml_backend_buffer_is_host(dst->buffer) : -1);
+    if (dst && dst->data && de->l1_backend)
+        ggml_backend_tensor_set_async(de->l1_backend, dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
+    fprintf(stderr, "LOADED il=%d slots=%d (all via CPU)\n", il, n_slots);
+    for (int i = 0; i < n_slots; i++) {
+        int eid = de->ids_buf[i];
+        if (eid<0||eid>=de->reader->n_experts) continue;
+        auto cf = [&](ggml_tensor * tt, int pi, uint8_t * l2b, size_t l2s) {
+            if (!tt||pi<0||!tt->data||!tt->nb[2]) return;
+            size_t sz = tt->nb[2];
+            size_t n = dyn_ex_read_param(de->reader,pi,il,eid,de->cpu_buf.data(),sz);
+            if (il == 20 && i == 0) fprintf(stderr, "READ il=%d eid=%d pi=%d n=%zu sz=%zu\n", il, eid, pi, n, sz);
+            if (n < sz) return;
+            if (de->l1_backend) ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), i * sz, sz);
+        };
+        cf(layer.ffn_gate_up_exps, de->pi_gate_up, nullptr, 0);
+        cf(layer.ffn_gate_exps, de->pi_gate, nullptr, 0);
+        cf(layer.ffn_up_exps, de->pi_up, nullptr, 0);
+        cf(layer.ffn_down_exps, de->pi_down, nullptr, 0);
     }
-
-    return false;
+    return true;
 }
 
 llama_context::llama_context(
@@ -1552,12 +1471,25 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
     if (model.has_dyn_ex()) {
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
+        gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
     }
 
     if (model.has_dyn_ex()) {
         ggml_backend_sched_set_eval_callback(sched.get(), dyn_ex_eval_callback, (void*)&model);
     } else {
         ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
+    }
+
+    if (model.has_dyn_ex()) {
+        auto * de = model.dyn_ex_get_cache();
+        for (int i = 0; i < ggml_backend_sched_get_n_backends(sched.get()); i++) {
+            auto * backend = ggml_backend_sched_get_backend(sched.get(), i);
+            auto * dev     = ggml_backend_get_device(backend);
+            if (dev && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_GPU) {
+                de->l1_backend = backend;
+                break;
+            }
+        }
     }
 
     if (!graph_reuse_disable && res->can_reuse(gparams)) {
@@ -1917,8 +1849,8 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
         for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
             llama_seq_id seq_id = ubatch.seq_id[i][j];
             if (samplers.find(seq_id) == samplers.end()) {
-                return true;
-            }
+        return false;
+    }
         }
     }
     return false; // all sequences use backend sampling
@@ -2632,6 +2564,7 @@ ggml_cgraph * llama_context::graph_reserve(
     if (model.has_dyn_ex()) {
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
+        gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
     }
 
     res->reset();

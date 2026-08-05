@@ -278,7 +278,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->n_experts     = n_experts;
     cache->n_expert_used = n_expert_used;
 
-    cache->n_ubatch = std::max(1, (n_l1 / n_expert_used) / 2);
+    cache->n_ubatch = std::max(1, n_l1 / n_expert_used);
     cache->n_hot    = cache->n_ubatch * n_expert_used;
     cache->n_cache  = n_l1 - cache->n_hot;
 
@@ -296,6 +296,41 @@ dyn_ex_cache * dyn_ex_cache_init(
 
     LLAMA_LOG_INFO("dyn-ex: cache init: %d layers, %d experts, L1=%d slots (hot=%d cache=%d ubatch=%d), L2=%d per layer\n",
                    n_layers, n_experts, n_l1, cache->n_hot, cache->n_cache, cache->n_ubatch, n_l2);
+
+    // pre-allocate staging buffer to max expert param size (avoids per-callback heap alloc)
+    {
+        size_t max_param = 0;
+        for (int pi = 0; pi < reader->n_params; pi++) {
+            if (reader->param_size[pi] > max_param) max_param = reader->param_size[pi];
+        }
+        cache->cpu_buf.resize(max_param > 0 ? max_param : 1);
+        cache->cpu_buf2.resize(max_param > 0 ? max_param : 1);
+    }
+
+    {
+        size_t n = (size_t)cache->n_l1;
+        cache->ids_buf.resize(n);
+        cache->slots_buf.resize(n);
+        cache->assign_eid.resize(n);
+        cache->assign_l2_slot.resize(n);
+        cache->assign_hit.resize(n);
+        cache->l2_fill_eid.resize(n);
+        cache->l2_fill_slot.resize(n);
+    }
+
+#ifdef GGML_USE_CUDA
+    cudaMalloc((void **)&cache->l2_slot_of_dev, cache->n_experts * sizeof(int32_t));
+    cudaMalloc((void **)&cache->l2_age_dev,     cache->n_l2      * sizeof(uint64_t));
+    cudaMalloc((void **)&cache->l2_expert_dev,  cache->n_l2      * sizeof(int32_t));
+    cudaMalloc((void **)&cache->miss_flags_dev, cache->n_l1      * sizeof(uint8_t));
+    cudaMalloc((void **)&cache->sel_experts_dev, cache->n_l1      * sizeof(int32_t));
+    cudaEventCreateWithFlags((cudaEvent_t *)&cache->slot_event, cudaEventDisableTiming);
+    cudaStreamCreateWithFlags((cudaStream_t *)&cache->h2d_stream, cudaStreamNonBlocking);
+    cudaEventCreateWithFlags((cudaEvent_t *)&cache->h2d_done, cudaEventDisableTiming);
+#endif
+
+    cache->expert_freq.resize((size_t)n_layers * n_experts, 0);
+    cache->preload_top_k = n_l2 > 0 ? std::min(n_l2 / 2, 4) : 0; // pre-load up to 4 experts per layer
 
     (void)dev;
     return cache;
@@ -334,6 +369,14 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
     for (auto * hp : cache->t_barrier_host) {
         if (hp) cudaFreeHost(hp);
     }
+    if (cache->l2_slot_of_dev) cudaFree(cache->l2_slot_of_dev);
+    if (cache->l2_age_dev)     cudaFree(cache->l2_age_dev);
+    if (cache->l2_expert_dev)  cudaFree(cache->l2_expert_dev);
+    if (cache->miss_flags_dev) cudaFree(cache->miss_flags_dev);
+    if (cache->sel_experts_dev) cudaFree(cache->sel_experts_dev);
+    if (cache->slot_event)     cudaEventDestroy((cudaEvent_t)cache->slot_event);
+    if (cache->h2d_done)       cudaEventDestroy((cudaEvent_t)cache->h2d_done);
+    if (cache->h2d_stream)     cudaStreamDestroy((cudaStream_t)cache->h2d_stream);
 #endif
     delete cache->reader;
     delete cache;
@@ -365,4 +408,5 @@ void dyn_ex_cache_alloc_barriers(dyn_ex_cache * cache, int n_layers, int n_exper
         cache->t_release.push_back(r);
         cache->t_release_host.push_back(nullptr);
     }
+    cache->t_selected_experts.resize(n_layers, nullptr);
 }
