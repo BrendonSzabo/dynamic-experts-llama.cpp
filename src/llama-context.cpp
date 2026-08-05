@@ -110,7 +110,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
-    int n_slots = n_e < de->n_l1 ? n_e : de->n_l1;
+    int n_slots = n_e < de->n_expert_used ? n_e : de->n_expert_used;
 
     int g = -1;
     if (!de->free_groups.empty()) {
