@@ -18,10 +18,6 @@
 #include "llama-memory-recurrent.h"
 
 #include "llama.h"
-
-#ifdef GGML_USE_CUDA
-#include <cuda_runtime.h>
-#endif
 #include "models/models.h"
 
 #include "ggml.h"
@@ -1171,30 +1167,6 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             pimpl->dyn_ex->groups[g].age       = 0;
             pimpl->dyn_ex->group_state[g].store(dyn_ex_cache::GROUP_FREE, std::memory_order_relaxed);
             pimpl->dyn_ex->free_groups.push_back(g);
-        }
-
-        int n_layer = (int)hparams.n_layer();
-        int max_el  = n_expert_used * 4096;
-        pimpl->dyn_ex->t_slot_ids.resize(n_layer, nullptr);
-        {
-            size_t buf_sz = (size_t)max_el * sizeof(int32_t) * (size_t)n_layer;
-            ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, buf_sz);
-            for (int il = 0; il < n_layer; il++) {
-                auto * t = new ggml_tensor();
-                memset(t, 0, sizeof(ggml_tensor));
-                t->type  = GGML_TYPE_I32;
-                t->ne[0] = max_el; t->ne[1] = 1; t->ne[2] = 1; t->ne[3] = 1;
-                t->nb[0] = sizeof(int32_t);
-                t->nb[1] = (size_t)sizeof(int32_t) * (max_el);
-                t->nb[2] = t->nb[1]; t->nb[3] = t->nb[2];
-                t->flags = GGML_TENSOR_FLAG_EXTERNAL;
-                size_t off = (size_t)il * (size_t)max_el * sizeof(int32_t);
-                ggml_backend_tensor_alloc(buf, t, (char *)ggml_backend_buffer_get_base(buf) + off);
-                pimpl->dyn_ex->t_slot_ids[il] = t;
-#ifdef GGML_USE_CUDA
-                cudaMemset((char *)ggml_backend_buffer_get_base(buf) + off, 0, max_el * sizeof(int32_t));
-#endif
-            }
         }
     }
 

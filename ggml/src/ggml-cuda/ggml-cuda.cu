@@ -5457,17 +5457,18 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
 // writes sequential slot_ids + miss_flags. Thread 0 serializes all L2
 // mutations to avoid warp-level spinlock deadlock (n_e ≤ 64, negligible).
 __global__ void dyn_ex_slot_assign_kernel(
-    const int32_t * __restrict__ selected_experts,
-    const uint64_t * __restrict__ l2_age,
-    const int32_t * __restrict__ l2_slot_of,
-    const int32_t * __restrict__ l2_expert,
-    int32_t * __restrict__ slot_ids,
-    uint8_t * __restrict__ miss_flags,
+    const int32_t * __restrict__ selected_experts, // [n_expert_used, n_tokens]
+    uint64_t *       __restrict__ l2_age,           // [n_l2]
+    int32_t *        __restrict__ l2_slot_of,       // [n_experts]
+    int32_t *        __restrict__ l2_expert,        // [n_l2]
+    int32_t *        __restrict__ slot_ids,          // output: [n_expert_used, n_tokens]
+    uint8_t *        __restrict__ miss_flags,        // output: [n_expert_used * n_tokens]
     int base_slot,
     int n_experts,
     int n_l2,
     int total_ids) {
 
+    // thread 0: process all (token,expert) pairs, write slot_ids + miss_flags
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         for (int idx = 0; idx < total_ids; idx++) {
             int expert = selected_experts[idx];
@@ -5476,10 +5477,24 @@ __global__ void dyn_ex_slot_assign_kernel(
                 miss_flags[idx] = 0;
                 continue;
             }
-            if (n_l2 > 0 && l2_slot_of[expert] >= 0) {
-                miss_flags[idx] = 0;  // L2 hit
+            int slot = l2_slot_of[expert];
+            if (slot >= 0) {
+                l2_age[slot] = clock64();
+                miss_flags[idx] = 0;
+            } else if (n_l2 > 0) {
+                int victim = 0;
+                uint64_t oldest = UINT64_MAX;
+                for (int s = 0; s < n_l2; s++) {
+                    if (l2_age[s] < oldest) { oldest = l2_age[s]; victim = s; }
+                }
+                int old_expert = l2_expert[victim];
+                if (old_expert >= 0) l2_slot_of[old_expert] = -1;
+                l2_expert[victim] = expert;
+                l2_slot_of[expert] = victim;
+                l2_age[victim] = clock64();
+                miss_flags[idx] = 1;
             } else {
-                miss_flags[idx] = 1;  // L2 miss — CPU loads between tokens
+                miss_flags[idx] = 1;
             }
         }
     }
@@ -5489,10 +5504,22 @@ __global__ void dyn_ex_slot_assign_kernel(
 void dyn_ex_slot_assign_launch(
     ggml_backend_t backend,
     int32_t  * l2_slot_of_dev, uint64_t * l2_age_dev, int32_t * l2_expert_dev,
-    uint8_t * miss_flags_dev,
+    uint8_t * miss_flags_dev, bool * l2_state_dirty,
+    const std::vector<int32_t> & slot_of, const std::vector<uint64_t> & age,
+    const std::vector<int32_t> & expert,
+    void * slot_event,
     int n_experts, int n_l2,
     const int32_t * selected_experts_dev, int32_t * slot_ids_dev,
     int base_slot, int total_ids) {
+
+    // upload L2 state if dirty — batch entire arrays instead of per-expert copies
+    if (*l2_state_dirty && n_l2 > 0) {
+        cudaStream_t stream = ((ggml_backend_cuda_context *)backend->context)->stream();
+        CUDA_CHECK(cudaMemcpyAsync(l2_slot_of_dev, slot_of.data(), n_experts * sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(l2_age_dev,     age.data(),     n_l2      * sizeof(uint64_t), cudaMemcpyHostToDevice, stream));
+        CUDA_CHECK(cudaMemcpyAsync(l2_expert_dev,  expert.data(),  n_l2      * sizeof(int32_t), cudaMemcpyHostToDevice, stream));
+        *l2_state_dirty = false;
+    }
 
     cudaStream_t stream = ((ggml_backend_cuda_context *)backend->context)->stream();
     int block = 256;
@@ -5502,6 +5529,8 @@ void dyn_ex_slot_assign_launch(
         l2_expert_dev, slot_ids_dev, miss_flags_dev,
         base_slot, n_experts, n_l2, total_ids);
     CUDA_CHECK(cudaGetLastError());
+
+    cudaEventRecord((cudaEvent_t)slot_event, stream);
 }
 
 __global__ void dyn_ex_barrier_kernel(

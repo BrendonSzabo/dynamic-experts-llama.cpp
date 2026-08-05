@@ -15,13 +15,11 @@
 
 #include "capture.h"
 
-#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
 #ifdef GGML_USE_CUDA
 #include <cuda_runtime.h>
-#include "ggml-cuda.h"
 #endif
 #include <cstring>
 #include <limits>
@@ -98,14 +96,11 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (!de) return true;
 
     if (role == 1) {
-        for (int g : de->cur_groups) {
-            if (g >= 0 && g < de->n_groups) {
-                de->free_groups.push_back(g);
-                de->groups[g].layer = -1;
-            }
+        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
+            de->free_groups.push_back(de->cur_group);
+            de->groups[de->cur_group].layer = -1;
+            de->cur_group = -1;
         }
-        de->cur_groups.clear();
-        de->cur_group = -1;
         return false;
     }
 
@@ -115,107 +110,53 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
     int n_slots = n_e < de->n_l1 ? n_e : de->n_l1;
-    int n_groups_needed = (n_slots + de->n_expert_used - 1) / de->n_expert_used;
 
-    de->cur_groups.clear();
-    for (int gi = 0; gi < n_groups_needed; gi++) {
-        int g = -1;
-        if (!de->free_groups.empty()) {
-            g = de->free_groups.front();
-            de->free_groups.pop_front();
-        }
-        if (g < 0) {
-            uint64_t oldest_age = UINT64_MAX;
-            for (int i = 0; i < de->n_groups; i++)
-                if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
-        }
-        de->groups[g].layer = il;
-        de->groups[g].age   = ++de->clock;
-        de->cur_groups.push_back(g);
+    int g = -1;
+    if (!de->free_groups.empty()) {
+        g = de->free_groups.back();
+        de->free_groups.pop_back();
     }
-    std::sort(de->cur_groups.begin(), de->cur_groups.end());
-    de->cur_group = de->cur_groups.empty() ? -1 : de->cur_groups[0];
-    int base_slot = de->cur_group >= 0 ? de->groups[de->cur_group].base_slot : 0;
-
-    de->cur_groups.clear();
-    for (int gi = 0; gi < n_groups_needed; gi++) {
-        int g = -1;
-        if (!de->free_groups.empty()) {
-            g = de->free_groups.front();
-            de->free_groups.pop_front();
-        }
-        if (g < 0) {
-            uint64_t oldest_age = UINT64_MAX;
-            for (int i = 0; i < de->n_groups; i++)
-                if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
-        }
-        de->groups[g].layer = il;
-        de->groups[g].age   = ++de->clock;
-        de->cur_groups.push_back(g);
+    // fallback: should never trigger for correct pre-based batching
+    if (g < 0) {
+        uint64_t oldest_age = UINT64_MAX;
+        for (int i = 0; i < de->n_groups; i++)
+            if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
     }
-    de->cur_group = de->cur_groups.empty() ? -1 : de->cur_groups[0];
+    de->groups[g].layer = il;
+    de->groups[g].age   = ++de->clock;
+    de->cur_group = g;
+    int base_slot = de->groups[g].base_slot;
 
     de->ids_buf.resize(n_slots);
     ggml_backend_tensor_get(src, de->ids_buf.data(), 0, n_slots * sizeof(int32_t));
 
     auto & layer = model->layers[il];
 
-#ifdef GGML_USE_CUDA
-    ggml_tensor * slot_gpu = (il >= 0 && (size_t)il < de->t_slot_ids.size()) ? de->t_slot_ids[il] : nullptr;
-    if (slot_gpu && slot_gpu->data && de->l1_backend) {
-        cudaMemcpy(de->sel_experts_dev, de->ids_buf.data(), n_slots * sizeof(int32_t), cudaMemcpyHostToDevice);
-        dyn_ex_slot_assign_launch(de->l1_backend,
-            de->l2_slot_of_dev, de->l2_age_dev, de->l2_expert_dev, de->miss_flags_dev,
-            de->n_experts, de->n_l2,
-            de->sel_experts_dev, (int32_t *)slot_gpu->data, base_slot, n_slots);
+    ggml_tensor * dst = t->src[1];
+    de->slots_buf.resize(n_slots);
+    for (int i = 0; i < n_slots; i++) de->slots_buf[i] = base_slot + i;
+    if (dst && dst->data)
+        ggml_backend_tensor_set(dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
 
-        for (int i = 0; i < n_slots; i++) {
-            if (!de->miss_flags_host[i]) continue;
-            int eid = de->ids_buf[i];
-            if (eid < 0 || eid >= de->reader->n_experts) continue;
-            int slot = base_slot + i;
-            auto cf = [&](ggml_tensor * tt, int pi) {
-                if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-                size_t sz = tt->nb[2];
-                size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
-                if (n < sz) return;
-                if (de->l1_backend)
-                    ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
-            };
-            cf(layer.ffn_gate_up_exps, de->pi_gate_up);
-            cf(layer.ffn_gate_exps,   de->pi_gate);
-            cf(layer.ffn_up_exps,     de->pi_up);
-            cf(layer.ffn_down_exps,   de->pi_down);
-        }
-    } else
-#endif
-    {
-        ggml_tensor * dst = t->src[1];
-        de->slots_buf.resize(n_slots);
-        for (int i = 0; i < n_slots; i++) de->slots_buf[i] = base_slot + i;
-        if (dst && dst->data)
-            ggml_backend_tensor_set(dst, de->slots_buf.data(), 0, n_slots * sizeof(int32_t));
-
-        for (int i = 0; i < n_slots; i++) {
-            int eid = de->ids_buf[i];
-            if (eid < 0 || eid >= de->reader->n_experts) continue;
-            int slot = base_slot + i;
-            auto cf = [&](ggml_tensor * tt, int pi) {
-                if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-                size_t sz = tt->nb[2];
-                size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
-                if (n < sz) return;
-                if (de->l1_backend)
-                    ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
-            };
-            cf(layer.ffn_gate_up_exps, de->pi_gate_up);
-            cf(layer.ffn_gate_exps,   de->pi_gate);
-            cf(layer.ffn_up_exps,     de->pi_up);
-            cf(layer.ffn_down_exps,   de->pi_down);
-        }
+    for (int i = 0; i < n_slots; i++) {
+        int eid = de->ids_buf[i];
+        if (eid < 0 || eid >= de->reader->n_experts) continue;
+        int slot = base_slot + i;
+        auto cf = [&](ggml_tensor * tt, int pi) {
+            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+            size_t sz = tt->nb[2];
+            size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
+            if (n < sz) return;
+            if (de->l1_backend)
+                ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
+        };
+        cf(layer.ffn_gate_up_exps, de->pi_gate_up);
+        cf(layer.ffn_gate_exps,   de->pi_gate);
+        cf(layer.ffn_up_exps,     de->pi_up);
+        cf(layer.ffn_down_exps,   de->pi_down);
     }
-    return false;
 
+    return false;
 }
 
 llama_context::llama_context(
@@ -1511,7 +1452,6 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
         gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
-        gparams.dyn_ex_slot_ids = &model.dyn_ex_get_cache()->t_slot_ids;
     }
 
     if (model.has_dyn_ex()) {
@@ -2605,7 +2545,6 @@ ggml_cgraph * llama_context::graph_reserve(
         gparams.dyn_ex_barrier = &model.dyn_ex_get_cache()->t_barrier;
         gparams.dyn_ex_release = &model.dyn_ex_get_cache()->t_release;
         gparams.dyn_ex_selected_experts = &model.dyn_ex_get_cache()->t_selected_experts;
-        gparams.dyn_ex_slot_ids = &model.dyn_ex_get_cache()->t_slot_ids;
     }
 
     res->reset();
