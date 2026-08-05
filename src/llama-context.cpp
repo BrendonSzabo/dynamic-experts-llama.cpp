@@ -153,13 +153,14 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     for (int i = 0; i < n_slots; i++) {
         int eid = de->ids_buf[i];
         if (eid < 0 || eid >= de->reader->n_experts) continue;
+        int slot = base_slot + i;
         auto cf = [&](ggml_tensor * tt, int pi) {
             if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
             size_t sz = tt->nb[2];
             size_t n = dyn_ex_read_param(de->reader, pi, il, eid, de->cpu_buf.data(), sz);
             if (n < sz) return;
             if (de->l1_backend)
-                ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), i * sz, sz);
+                ggml_backend_tensor_set_async(de->l1_backend, tt, de->cpu_buf.data(), (size_t)slot * sz, sz);
         };
         cf(layer.ffn_gate_up_exps, de->pi_gate_up);
         cf(layer.ffn_gate_exps,   de->pi_gate);
