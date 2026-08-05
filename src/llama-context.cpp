@@ -97,11 +97,14 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (!de) return true;
 
     if (role == 1) {
-        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
-            de->free_groups.push_back(de->cur_group);
-            de->groups[de->cur_group].layer = -1;
-            de->cur_group = -1;
+        for (int g : de->cur_groups) {
+            if (g >= 0 && g < de->n_groups) {
+                de->free_groups.push_back(g);
+                de->groups[g].layer = -1;
+            }
         }
+        de->cur_groups.clear();
+        de->cur_group = -1;
         return false;
     }
 
@@ -110,23 +113,45 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
-    int n_slots = n_e < de->n_expert_used ? n_e : de->n_expert_used;
+    int n_slots = n_e < de->n_l1 ? n_e : de->n_l1;
+    int n_groups_needed = (n_slots + de->n_expert_used - 1) / de->n_expert_used;
 
-    int g = -1;
-    if (!de->free_groups.empty()) {
-        g = de->free_groups.back();
-        de->free_groups.pop_back();
+    de->cur_groups.clear();
+    for (int gi = 0; gi < n_groups_needed; gi++) {
+        int g = -1;
+        if (!de->free_groups.empty()) {
+            g = de->free_groups.front();
+            de->free_groups.pop_front();
+        }
+        if (g < 0) {
+            uint64_t oldest_age = UINT64_MAX;
+            for (int i = 0; i < de->n_groups; i++)
+                if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
+        }
+        de->groups[g].layer = il;
+        de->groups[g].age   = ++de->clock;
+        de->cur_groups.push_back(g);
     }
-    // fallback: should never trigger for correct pre-based batching
-    if (g < 0) {
-        uint64_t oldest_age = UINT64_MAX;
-        for (int i = 0; i < de->n_groups; i++)
-            if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
+    de->cur_group = de->cur_groups.empty() ? -1 : de->cur_groups[0];
+    int base_slot = de->cur_group >= 0 ? de->groups[de->cur_group].base_slot : 0;
+
+    de->cur_groups.clear();
+    for (int gi = 0; gi < n_groups_needed; gi++) {
+        int g = -1;
+        if (!de->free_groups.empty()) {
+            g = de->free_groups.front();
+            de->free_groups.pop_front();
+        }
+        if (g < 0) {
+            uint64_t oldest_age = UINT64_MAX;
+            for (int i = 0; i < de->n_groups; i++)
+                if (de->groups[i].age < oldest_age) { oldest_age = de->groups[i].age; g = i; }
+        }
+        de->groups[g].layer = il;
+        de->groups[g].age   = ++de->clock;
+        de->cur_groups.push_back(g);
     }
-    de->groups[g].layer = il;
-    de->groups[g].age   = ++de->clock;
-    de->cur_group = g;
-    int base_slot = de->groups[g].base_slot;
+    de->cur_group = de->cur_groups.empty() ? -1 : de->cur_groups[0];
 
     de->ids_buf.resize(n_slots);
     ggml_backend_tensor_get(src, de->ids_buf.data(), 0, n_slots * sizeof(int32_t));

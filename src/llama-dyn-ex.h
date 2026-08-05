@@ -102,6 +102,7 @@ struct dyn_ex_cache {
     std::unique_ptr<std::atomic<uint8_t>[]> group_state;
     int prev_group = -1;
     int cur_group  = -1;
+    std::vector<int> cur_groups; // groups claimed by current claim barrier (for multi-group prefill)
 
     std::deque<int> free_groups; // FIFO freelist of free group indices
 
