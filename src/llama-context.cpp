@@ -214,7 +214,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             cf(layer.ffn_down_exps,   de->pi_down);
         }
     }
-    return n_groups_needed > 1;
+    return false;
 
 }
 
