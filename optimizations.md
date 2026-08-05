@@ -93,3 +93,15 @@ L2 arrays via `cudaHostAlloc(cudaHostAllocMapped)`. Device ptr for kernel, host 
 `cuFileRead` DMA from NVMe `.bin` → L1 tensor. GPU reads expert weights directly, no CPU. NVMe on same PCIe switch. Pascal GPU supports it. Page-aligned `.bin`.
 
 **Speed**: Per-expert: 5µs (queue DMA) vs 150µs (pread+H2D). Per-token: 5ms vs 144ms. ~30x.
+
+---
+
+## Trace Gathering (`--trace <dir>`)
+
+Gathers per-token inference telemetry: hidden states, attention, logits, top-k experts, slot assignments, output token. Uses GPU-side linked list — kernels atomically append during inference, CPU drains after token.
+
+### Design
+- **GPU**: Pre-allocated device buffer as linked list. Kernels atomically swap head pointer, write entry. Zero CPU involvement during inference — pure device-side CAS.
+- **CPU drain**: After `cudaDeviceSynchronize` at token end, walk list via `cudaMemcpy`, deserialize, write to binary log file in trace directory.
+- **Memory**: Fixed-size pool (128MB). Variable-sized entries (hidden state ~320KB/token, attention smaller, top-k 32 bytes). Atomic counter tracks remaining space — graceful degradation on fill.
+- **Guard**: `#ifdef GGML_USE_CUDA` + runtime `--trace <dir>`. Zero overhead when disabled.
