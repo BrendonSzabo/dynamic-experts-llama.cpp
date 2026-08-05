@@ -1711,7 +1711,7 @@ static void ggml_compute_forward_mul_mat_id(
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
     GGML_ASSERT(params);
 
-    if (tensor->op == GGML_OP_NONE || tensor->op == GGML_OP_DYN_EX_BARRIER || ggml_is_empty(tensor)) {
+    if (tensor->op == GGML_OP_NONE || ggml_is_empty(tensor)) {
         return;
     }
 
@@ -2117,7 +2117,6 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             }
             break;
         case GGML_OP_NONE:
-        case GGML_OP_DYN_EX_BARRIER:
             {
                 // nop
             } break;
@@ -2465,7 +2464,6 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 n_tasks = n_threads;
             } break;
         case GGML_OP_NONE:
-        case GGML_OP_DYN_EX_BARRIER:
             {
                 n_tasks = 1;
             } break;

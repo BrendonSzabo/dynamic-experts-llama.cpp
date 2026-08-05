@@ -1364,8 +1364,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     dyn_ex_barrier   (params.dyn_ex_barrier),
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()),
-    dyn_ex_release   (params.dyn_ex_release),
-    dyn_ex_selected_experts (params.dyn_ex_selected_experts) {
+    dyn_ex_release   (params.dyn_ex_release) {
         res->set_params(params);
     }
 
@@ -1934,10 +1933,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(selected_experts->src[0], "ffn_moe_argsort", il);
     }
     cb(selected_experts, "ffn_moe_topk", il);
-
-    if (dyn_ex_selected_experts && il >= 0 && (size_t)il < dyn_ex_selected_experts->size()) {
-        (*dyn_ex_selected_experts)[il] = selected_experts;
-    }
 
     if (arch == LLM_ARCH_GROVEMOE && n_expert != hparams.n_expert) {
         // TODO: Use scalar div instead when/if implemented
