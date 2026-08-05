@@ -2,12 +2,14 @@
 
 ## Completed (in `de05a8e5d`)
 
-### 1. LIFO Freelist for Group Claiming
+### 1. FIFO Freelist for Group Claiming (Lock-Free)
 **Files**: `llama-dyn-ex.h`, `llama-model.cpp`, `llama-context.cpp`
 
-Replaces atomic CAS loop (scans all 8 groups) with a `std::vector<int> free_groups`. Claim = `pop_back()` (O(1)), release = `push_back()` (O(1)). Eliminates 640 atomic ops and array scans per token (40 layers × 8 CAS checks + 8 LRU scans).
+Replaces atomic CAS loop (scans all 8 groups) with a `std::deque<int> free_groups`. Claim = `pop_front()`, release = `push_back()`. Both O(1), no lock needed — they touch opposite ends of the deque. Release (producer) pushes to back, claim (consumer) pops from front. Callback is single-threaded anyway (sequential pre-callback loop), making the mutex dead weight.
 
-**Speed**: ~10-15µs per layer saved, ~0.5ms per token.
+FIFO also distributes groups evenly: each layer gets a *different* group, cycling through all 8 before reusing. With LIFO (`pop_back`), the same group gets claimed and released immediately, thrashing one L1 region while leaving 7 unused.
+
+**Speed**: ~10-15µs per layer saved (no CAS scan, no mutex), ~0.5ms per token.
 
 ### 2. Persistent Buffers
 **Files**: `llama-dyn-ex.h`, `llama-dyn-ex.cpp`, `llama-context.cpp`

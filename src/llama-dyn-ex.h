@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <vector>
@@ -101,6 +102,8 @@ struct dyn_ex_cache {
     std::unique_ptr<std::atomic<uint8_t>[]> group_state;
     int prev_group = -1;
     int cur_group  = -1;
+
+    std::deque<int> free_groups; // FIFO freelist — push_back (release), pop_front (claim), no lock needed
 
     std::function<void(int group_idx, int layer)> on_group_release;
 
