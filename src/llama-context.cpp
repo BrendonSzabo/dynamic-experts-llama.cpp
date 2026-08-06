@@ -98,12 +98,76 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (!de) return true;
 
 #ifdef GGML_USE_CUDA
-    // Run barrier synchronously on prefetch stream, outside graph capture scope.
-    // Return false so the scheduler skips dispatching to the CUDA backend.
-    dyn_ex_barrier_run(de, de->prefetch_stream, t);
-    cudaError_t err = cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
-    if (err != cudaSuccess)
-        fprintf(stderr, "[dyn-ex] L%d sync err: %s\n", il, cudaGetErrorString(err));
+    if (role == 1) {
+        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
+            de->free_groups.push_back(de->cur_group);
+            de->cur_group = -1;
+        }
+        return false;
+    }
+
+    ggml_tensor * src = t->src[0];
+    if (!src || !src->data) return false;
+
+    int n_e = (int)(src->ne[0] * src->ne[1]);
+    if (n_e <= 0) return false;
+
+    if ((int)de->ids_buf.size() < n_e) de->ids_buf.resize(n_e);
+    cudaMemcpyAsync(de->ids_buf.data(), src->data, n_e * sizeof(int32_t), cudaMemcpyDeviceToHost, (cudaStream_t)de->prefetch_stream);
+    cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+
+    auto & layer = model->layers[il];
+    auto * reader = de->reader;
+    auto & l2    = de->l2[il];
+    de->clock++;
+
+    GGML_ASSERT(!de->free_groups.empty());
+    int g = de->free_groups.front();
+    de->free_groups.pop_front();
+    de->cur_group = g;
+    int base_slot = de->groups[g].base_slot;
+
+    int slot_end = base_slot + de->n_expert_used;
+    if (slot_end > de->n_l1) slot_end = de->n_l1;
+    for (int s = base_slot; s < slot_end; s++)
+        de->l1_expert[s] = DYN_EX_SENTINEL;
+
+    for (int i = 0; i < n_e && i < de->n_l1; i++) {
+        int eid = (int)de->ids_buf[i];
+        if (eid < 0 || eid >= reader->n_experts) continue;
+        int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
+        int l1_slot = base_slot + i;
+
+        auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
+            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+            size_t sz = tt->nb[2];
+            if (l2_slot >= 0 && l2_data) {
+                cudaMemcpyAsync((char *)tt->data + (size_t)l1_slot * sz,
+                    l2_data + (size_t)l2_slot * l2_row, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+            } else {
+                dyn_ex_read_param(reader, pi, il, eid, de->cpu_buf.data(), sz);
+                cudaMemcpyAsync((char *)tt->data + (size_t)l1_slot * sz,
+                    de->cpu_buf.data(), sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+            }
+        };
+        copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
+        copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
+        copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
+        copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+
+        de->l1_expert[l1_slot] = eid;
+        de->l1_layer[l1_slot]  = il;
+    }
+
+    ggml_tensor * dst = t->src[1];
+    if (dst && dst->data) {
+        if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
+        for (int i = 0; i < n_e; i++)
+            de->slots_buf[i] = (i < de->n_l1) ? base_slot + i : -1;
+        cudaMemcpyAsync(dst->data, de->slots_buf.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+    }
+
+    cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
     return false;
 #else
     if (role == 1) {

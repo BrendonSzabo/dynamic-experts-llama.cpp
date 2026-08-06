@@ -1275,26 +1275,22 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 l2.age.resize(l2.n_l2);
 
                 if (l2.gate_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocMapped);
-                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_gate_data, l2.gate_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocDefault);
                     if (e != cudaSuccess)
                         LLAMA_LOG_ERROR("dyn-ex: layer %d gate_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.up_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocMapped);
-                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_up_data, l2.up_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocDefault);
                     if (e != cudaSuccess)
                         LLAMA_LOG_ERROR("dyn-ex: layer %d up_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.down_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocMapped);
-                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_down_data, l2.down_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocDefault);
                     if (e != cudaSuccess)
                         LLAMA_LOG_ERROR("dyn-ex: layer %d down_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.gate_up_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocMapped);
-                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_gate_up_data, l2.gate_up_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocDefault);
                     if (e != cudaSuccess)
                         LLAMA_LOG_ERROR("dyn-ex: layer %d gate_up_data failed: %s\n", il, cudaGetErrorString(e));
                 }
