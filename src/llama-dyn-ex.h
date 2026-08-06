@@ -94,16 +94,12 @@ struct dyn_ex_cache {
         int      layer;
         uint64_t age;
     };
-    static constexpr uint8_t GROUP_FREE = 0;
-    static constexpr uint8_t GROUP_BUSY = 1;
 
     int n_groups = 0;
     std::vector<group> groups;
-    std::unique_ptr<std::atomic<uint8_t>[]> group_state;
+    std::deque<int> free_groups; // FIFO freelist — push_back (release), pop_front (claim)
     int prev_group = -1;
     int cur_group  = -1;
-
-    std::deque<int> free_groups; // FIFO freelist — push_back (release), pop_front (claim)
 
     std::vector<uint8_t>  cpu_buf;
     std::vector<int32_t>  ids_buf;
@@ -113,21 +109,29 @@ struct dyn_ex_cache {
 
     // L2: per-layer host buffers [n_layers]
     struct l2_layer {
-        std::vector<uint8_t> gate;
-        std::vector<uint8_t> up;
-        std::vector<uint8_t> down;
-        std::vector<uint8_t> gate_up;
-        std::vector<int32_t>  expert;        // [n_l2] which expert in each slot, -1 = empty
-        std::vector<int32_t>  slot_of;       // [n_experts] which slot holds each expert, -1 = not cached
-        std::vector<uint64_t> age;           // [n_l2] LRU
-        size_t gate_size    = 0;
-        size_t up_size      = 0;
-        size_t down_size    = 0;
-        size_t gate_up_size = 0;
-        size_t gate_row     = 0;
-        size_t up_row       = 0;
-        size_t down_row     = 0;
-        size_t gate_up_row  = 0;
+        uint8_t * gate_data    = nullptr;
+        uint8_t * up_data      = nullptr;
+        uint8_t * down_data    = nullptr;
+        uint8_t * gate_up_data = nullptr;
+        uint8_t * d_gate_data    = nullptr;
+        uint8_t * d_up_data      = nullptr;
+        uint8_t * d_down_data    = nullptr;
+        uint8_t * d_gate_up_data = nullptr;
+
+        int    * expert_to_slot   = nullptr;
+        int    * d_expert_to_slot = nullptr;
+        std::vector<int> slot_to_expert;
+        std::vector<uint64_t> age;
+        int      n_l2 = 0;
+        size_t   gate_row    = 0;
+        size_t   up_row      = 0;
+        size_t   down_row    = 0;
+        size_t   gate_up_row = 0;
+        size_t   gate_size   = 0;
+        size_t   up_size     = 0;
+        size_t   down_size   = 0;
+        size_t   gate_up_size = 0;
+        bool     allocated = false;
     };
     std::vector<l2_layer> l2;
 
@@ -142,7 +146,56 @@ struct dyn_ex_cache {
     std::vector<void *>               t_release_host;
 
 #ifdef GGML_USE_CUDA
-    std::mutex l2_mutex; // protects L2 eviction
+    std::mutex l2_mutex;
+
+    // device-side group freelist stack
+    int * d_free_stack  = nullptr;
+    int * d_stack_ptr   = nullptr;
+
+    // miss buffer (pinned, device-visible)
+    static constexpr int MISS_BUF_SIZE = 512;
+    struct miss_entry { int layer; int expert_id; };
+    miss_entry * h_miss_buf = nullptr;
+    miss_entry * d_miss_buf = nullptr;
+    int * h_miss_count = nullptr;
+    int * d_miss_count = nullptr;
+
+    // busy-wait sync flags (pinned, device-visible)
+    int * h_sync_flag     = nullptr;
+    int * d_sync_flag     = nullptr;
+    int * h_misses_posted = nullptr;
+    int * d_misses_posted = nullptr;
+
+    // kernel
+    void launch_slot_assign(
+        const int32_t * d_selected_experts,
+        int32_t * d_slot_ids,
+        const int * d_l2_expert_to_slot,
+        const uint8_t * d_l2_gate_data,
+        const uint8_t * d_l2_up_data,
+        const uint8_t * d_l2_down_data,
+        const uint8_t * d_l2_gate_up_data,
+        uint8_t * d_l1_gate,
+        uint8_t * d_l1_up,
+        uint8_t * d_l1_down,
+        uint8_t * d_l1_gate_up,
+        size_t l1_stride_gate,
+        size_t l1_stride_up,
+        size_t l1_stride_down,
+        size_t l1_stride_gate_up,
+        size_t l2_gate_row,
+        size_t l2_up_row,
+        size_t l2_down_row,
+        size_t l2_gate_up_row,
+        int n_expert_used,
+        int n_tokens,
+        int n_groups,
+        int base_slot,
+        int n_experts,
+        int layer,
+        void * stream);
+
+    static void release_group(int * d_stack, int * d_stack_ptr, int group_idx, void * stream);
 #endif
 };
 

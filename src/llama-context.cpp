@@ -97,18 +97,23 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     auto * de = model->dyn_ex_get_cache();
     if (!de) return true;
 
+#ifdef GGML_USE_CUDA
     if (role == 1) {
         if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
-            de->group_state[de->cur_group].store(dyn_ex_cache::GROUP_FREE, std::memory_order_release);
-            de->groups[de->cur_group].layer = -1;
-            de->free_groups.push_back(de->cur_group);
-            if (de->on_group_release) {
-                de->on_group_release(de->cur_group, il);
-            }
+            de->release_group(de->d_free_stack, de->d_stack_ptr, de->cur_group, 0);
             de->cur_group = -1;
         }
         return false;
     }
+#else
+    if (role == 1) {
+        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
+            de->free_groups.push_back(de->cur_group);
+            de->cur_group = -1;
+        }
+        return false;
+    }
+#endif
 
     ggml_tensor * src = t->src[0];
     if (!src || !src->data) return false;
@@ -116,6 +121,80 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
 
+#ifdef GGML_USE_CUDA
+    int n_tokens = src->ne[1];
+    auto & l2 = de->l2[il];
+    auto * reader = de->reader;
+
+    {
+        ggml_tensor * dst = t->src[1];
+        auto & layer = model->layers[il];
+        de->clock++;
+
+        *de->h_misses_posted = 0;
+        *de->h_sync_flag = 0;
+
+        de->launch_slot_assign(
+            (const int32_t *)src->data,
+            (int32_t *)dst->data,
+            l2.d_expert_to_slot,
+            l2.d_gate_data, l2.d_up_data, l2.d_down_data, l2.d_gate_up_data,
+            (uint8_t *)(layer.ffn_gate_exps    ? layer.ffn_gate_exps->data    : nullptr),
+            (uint8_t *)(layer.ffn_up_exps      ? layer.ffn_up_exps->data      : nullptr),
+            (uint8_t *)(layer.ffn_down_exps    ? layer.ffn_down_exps->data    : nullptr),
+            (uint8_t *)(layer.ffn_gate_up_exps ? layer.ffn_gate_up_exps->data : nullptr),
+            de->l1_stride_gate, de->l1_stride_up, de->l1_stride_down, de->l1_stride_gate_up,
+            l2.gate_row, l2.up_row, l2.down_row, l2.gate_up_row,
+            de->n_expert_used, n_tokens, de->n_groups, 0, de->n_experts, il,
+            (void *)0);
+
+        while (*((volatile int *)de->h_misses_posted) == 0) { /* spin */ }
+        int miss_count = *((volatile int *)de->h_miss_count);
+        if (miss_count > 0) {
+            int n = std::min(miss_count, de->MISS_BUF_SIZE);
+            for (int i = 0; i < n; i++) {
+                int expert_id = de->h_miss_buf[i].expert_id;
+                if (expert_id < 0 || expert_id >= reader->n_experts) continue;
+
+                int victim = -1;
+                for (int s = 0; s < de->n_l2; s++) {
+                    if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
+                }
+                if (victim < 0) {
+                    uint64_t oldest = UINT64_MAX;
+                    for (int s = 0; s < de->n_l2; s++) {
+                        if (l2.age[s] < oldest) { oldest = l2.age[s]; victim = s; }
+                    }
+                    int evicted = l2.slot_to_expert[victim];
+                    if (evicted >= 0) l2.expert_to_slot[evicted] = DYN_EX_SENTINEL;
+                }
+                l2.slot_to_expert[victim] = expert_id;
+                l2.expert_to_slot[expert_id] = victim;
+                l2.age[victim] = de->clock;
+
+                if (de->pi_gate >= 0 && l2.gate_size > 0)
+                    dyn_ex_read_param(reader, de->pi_gate, il, expert_id,
+                        l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
+                if (de->pi_up >= 0 && l2.up_size > 0)
+                    dyn_ex_read_param(reader, de->pi_up, il, expert_id,
+                        l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
+                if (de->pi_down >= 0 && l2.down_size > 0)
+                    dyn_ex_read_param(reader, de->pi_down, il, expert_id,
+                        l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
+                if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
+                    dyn_ex_read_param(reader, de->pi_gate_up, il, expert_id,
+                        l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
+            }
+            *de->h_miss_count = 0;
+            *((volatile int *)de->h_sync_flag) = 1;
+        }
+
+        cudaDeviceSynchronize();
+    }
+
+    return false;
+
+#else
     if ((int)de->ids_buf.size() < n_e) de->ids_buf.resize(n_e);
     auto & ids = de->ids_buf;
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
@@ -130,113 +209,40 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     GGML_ASSERT(!de->free_groups.empty());
     int g = de->free_groups.front();
     de->free_groups.pop_front();
-    de->groups[g].layer = il;
-    de->groups[g].age   = de->clock;
     de->cur_group = g;
     int base_slot = de->groups[g].base_slot;
 
-    // Phase 1: resolve L2 slots (mutex-protected, O(1) lookup)
-    struct { int eid; int l2_slot; bool is_hit; } assignments[32];
-    int n_assign = 0;
+    for (int i = 0; i < n_e && i < de->n_l1; i++) {
+        int eid = (int)ids[i];
+        if (eid < 0 || eid >= reader->n_experts) continue;
+        int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
+        int l1_slot = base_slot + i;
 
-    {
-#ifdef GGML_USE_CUDA
-        std::lock_guard<std::mutex> lock(de->l2_mutex);
-#endif
-        for (int i = 0; i < n_e && i < de->n_l1; i++) {
-            int eid = ids[i];
-            if (eid < 0 || eid >= reader->n_experts) continue;
-
-            if (de->n_l2 > 0 && eid < (int)l2.slot_of.size()) {
-                int hit_slot = l2.slot_of[eid];
-                if (hit_slot >= 0) {
-                    l2.age[hit_slot] = de->clock;
-                    assignments[n_assign++] = { eid, hit_slot, true };
-                    continue;
-                }
-                uint64_t oldest = UINT64_MAX;
-                int victim = 0;
-                for (int s = 0; s < de->n_l2; s++) {
-                    if (l2.age[s] < oldest) { oldest = l2.age[s]; victim = s; }
-                }
-                if (l2.expert[victim] >= 0 && l2.expert[victim] < (int)l2.slot_of.size())
-                    l2.slot_of[l2.expert[victim]] = DYN_EX_SENTINEL;
-                l2.expert[victim] = eid;
-                l2.slot_of[eid] = victim;
-                l2.age[victim] = de->clock;
-                assignments[n_assign++] = { eid, victim, false };
-            } else {
-                assignments[n_assign++] = { eid, -1, false };
-            }
-        }
-    }
-
-    struct { int eid; int l2_slot; } l2_fill[32];
-    int n_fill = 0;
-
-    for (int a = 0; a < n_assign; a++) {
-        int eid   = assignments[a].eid;
-        int l2_s  = assignments[a].l2_slot;
-        bool hit  = assignments[a].is_hit;
-        int slot  = base_slot + a;
-
-        auto copy = [&](ggml_tensor * tt, int pi, uint8_t * l2_buf, size_t l2_sz) {
+        auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
             if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-            size_t sz = tt->nb[2], off = (size_t)slot * sz;
-            if (hit && l2_sz > 0) {
-#ifdef GGML_USE_CUDA
-                cudaMemcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz, cudaMemcpyHostToDevice);
-#else
-                memcpy((char *)tt->data + off, l2_buf + (size_t)l2_s * l2_sz, sz);
-#endif
+            size_t sz = tt->nb[2];
+            if (l2_slot >= 0 && l2_data) {
+                memcpy((char *)tt->data + (size_t)l1_slot * sz, l2_data + (size_t)l2_slot * l2_row, sz);
             } else {
-                if (dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz) < sz) return;
-#ifdef GGML_USE_CUDA
-                cudaMemcpy((char *)tt->data + off, cpu_buf.data(), sz, cudaMemcpyHostToDevice);
-#else
-                memcpy((char *)tt->data + off, cpu_buf.data(), sz);
-#endif
+                dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz);
+                memcpy((char *)tt->data + (size_t)l1_slot * sz, cpu_buf.data(), sz);
             }
         };
-
-        copy(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up.data(), l2.gate_up_size);
-        copy(layer.ffn_gate_exps,   de->pi_gate,    l2.gate.data(),    l2.gate_size);
-        copy(layer.ffn_up_exps,     de->pi_up,      l2.up.data(),      l2.up_size);
-        copy(layer.ffn_down_exps,   de->pi_down,    l2.down.data(),    l2.down_size);
-
-        if (!hit && l2_s >= 0 && de->n_l2 > 0) {
-            l2_fill[n_fill++] = { eid, l2_s };
-        }
-    }
-
-    // Phase 3: fill L2 in background for future token reuse
-    for (int f = 0; f < n_fill; f++) {
-        int eid = l2_fill[f].eid;
-        int l2_slot = l2_fill[f].l2_slot;
-        if (l2_slot < 0) continue;
-        if (de->pi_gate >= 0 && l2.gate_size > 0)
-            dyn_ex_read_param(reader, de->pi_gate, il, eid, l2.gate.data() + (size_t)l2_slot * l2.gate_size, l2.gate_size);
-        if (de->pi_up >= 0 && l2.up_size > 0)
-            dyn_ex_read_param(reader, de->pi_up, il, eid, l2.up.data() + (size_t)l2_slot * l2.up_size, l2.up_size);
-        if (de->pi_down >= 0 && l2.down_size > 0)
-            dyn_ex_read_param(reader, de->pi_down, il, eid, l2.down.data() + (size_t)l2_slot * l2.down_size, l2.down_size);
-        if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
-            dyn_ex_read_param(reader, de->pi_gate_up, il, eid, l2.gate_up.data() + (size_t)l2_slot * l2.gate_up_size, l2.gate_up_size);
+        copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
+        copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
+        copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
+        copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
     }
 
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
         if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
-        auto & slots = de->slots_buf;
-        for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? base_slot + i : -1;
-#ifdef GGML_USE_CUDA
-        cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
-#else
-        memcpy(dst->data, slots.data(), n_e * sizeof(int32_t));
-#endif
+        for (int i = 0; i < n_e; i++) de->slots_buf[i] = (i < de->n_l1) ? base_slot + i : -1;
+        memcpy(dst->data, de->slots_buf.data(), n_e * sizeof(int32_t));
     }
 
     return false;
+#endif
 }
 
 llama_context::llama_context(

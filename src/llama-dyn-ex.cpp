@@ -316,16 +316,7 @@ void dyn_ex_cache_set_layer_size(
     l2.down_row     = down_row;
     l2.gate_up_size = gate_up_size;
     l2.gate_up_row  = gate_up_row;
-
-    if (cache->n_l2 > 0) {
-        l2.expert.assign(cache->n_l2, DYN_EX_SENTINEL);
-        l2.slot_of.assign(cache->n_experts, DYN_EX_SENTINEL);
-        l2.age.assign(cache->n_l2, 0);
-        if (gate_size)    l2.gate.resize((size_t)cache->n_l2 * gate_size);
-        if (up_size)   l2.up.resize((size_t)cache->n_l2 * up_size);
-        if (down_size) l2.down.resize((size_t)cache->n_l2 * down_size);
-        if (gate_up_size) l2.gate_up.resize((size_t)cache->n_l2 * gate_up_size);
-    }
+    l2.n_l2 = cache->n_l2;
 }
 
 void dyn_ex_cache_free(dyn_ex_cache * cache) {
@@ -333,6 +324,20 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
 #ifdef GGML_USE_CUDA
     for (auto * hp : cache->t_barrier_host) {
         if (hp) cudaFreeHost(hp);
+    }
+    if (cache->d_free_stack) cudaFree(cache->d_free_stack);
+    if (cache->d_stack_ptr) cudaFree(cache->d_stack_ptr);
+    if (cache->h_miss_buf) cudaFreeHost(cache->h_miss_buf);
+    if (cache->h_miss_count) cudaFreeHost(cache->h_miss_count);
+    if (cache->h_sync_flag) cudaFreeHost(cache->h_sync_flag);
+    if (cache->h_misses_posted) cudaFreeHost(cache->h_misses_posted);
+    for (auto & l2 : cache->l2) {
+        if (!l2.allocated) continue;
+        if (l2.expert_to_slot) cudaFreeHost(l2.expert_to_slot);
+        if (l2.gate_data) cudaFreeHost(l2.gate_data);
+        if (l2.up_data) cudaFreeHost(l2.up_data);
+        if (l2.down_data) cudaFreeHost(l2.down_data);
+        if (l2.gate_up_data) cudaFreeHost(l2.gate_up_data);
     }
 #endif
     delete cache->reader;

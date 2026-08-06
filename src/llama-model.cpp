@@ -38,6 +38,10 @@
 #include <string>
 #include <vector>
 
+#ifdef GGML_USE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params & params) {
     switch (arch) {
         case LLM_ARCH_LLAMA:
@@ -1160,14 +1164,77 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
         int n_expert_used = (int)hparams.n_expert_used;
         pimpl->dyn_ex->n_groups = n_l1 / n_expert_used;
         pimpl->dyn_ex->groups.resize(pimpl->dyn_ex->n_groups);
-        pimpl->dyn_ex->group_state.reset(new std::atomic<uint8_t>[pimpl->dyn_ex->n_groups]);
         for (int g = 0; g < pimpl->dyn_ex->n_groups; g++) {
             pimpl->dyn_ex->groups[g].base_slot = g * n_expert_used;
             pimpl->dyn_ex->groups[g].layer     = -1;
             pimpl->dyn_ex->groups[g].age       = 0;
-            pimpl->dyn_ex->group_state[g].store(dyn_ex_cache::GROUP_FREE, std::memory_order_relaxed);
             pimpl->dyn_ex->free_groups.push_back(g);
         }
+
+#ifdef GGML_USE_CUDA
+        {
+            auto & de = *pimpl->dyn_ex;
+            int n_groups = de.n_groups;
+            int n_layers_val = (int)layers.size();
+
+            {
+                std::vector<int> init_stack(n_groups);
+                for (int g = 0; g < n_groups; g++) init_stack[g] = g;
+                cudaMalloc(&de.d_free_stack, n_groups * sizeof(int));
+                cudaMalloc(&de.d_stack_ptr, sizeof(int));
+                cudaMemcpy(de.d_free_stack, init_stack.data(), n_groups * sizeof(int), cudaMemcpyHostToDevice);
+                int depth = n_groups;
+                cudaMemcpy(de.d_stack_ptr, &depth, sizeof(int), cudaMemcpyHostToDevice);
+            }
+
+            {
+                size_t miss_buf_bytes = de.MISS_BUF_SIZE * sizeof(dyn_ex_cache::miss_entry);
+                cudaHostAlloc((void **)&de.h_miss_buf, miss_buf_bytes, cudaHostAllocMapped);
+                cudaHostGetDevicePointer((void **)&de.d_miss_buf, de.h_miss_buf, 0);
+                cudaHostAlloc((void **)&de.h_miss_count, sizeof(int), cudaHostAllocMapped);
+                cudaHostGetDevicePointer((void **)&de.d_miss_count, de.h_miss_count, 0);
+                *de.h_miss_count = 0;
+
+            cudaHostAlloc((void **)&de.h_sync_flag, sizeof(int), cudaHostAllocMapped);
+            cudaHostGetDevicePointer((void **)&de.d_sync_flag, (void *)de.h_sync_flag, 0);
+            cudaHostAlloc((void **)&de.h_misses_posted, sizeof(int), cudaHostAllocMapped);
+            cudaHostGetDevicePointer((void **)&de.d_misses_posted, (void *)de.h_misses_posted, 0);
+            *de.h_sync_flag = 0;
+            *de.h_misses_posted = 0;
+            }
+
+            for (int il = 0; il < n_layers_val; il++) {
+                auto & l2 = de.l2[il];
+                if (l2.gate_size == 0 && l2.up_size == 0 && l2.down_size == 0 && l2.gate_up_size == 0) continue;
+
+                int n_experts = de.reader->n_experts;
+                size_t ets_bytes = n_experts * sizeof(int);
+                cudaHostAlloc((void **)&l2.expert_to_slot, ets_bytes, cudaHostAllocMapped);
+                cudaHostGetDevicePointer((void **)&l2.d_expert_to_slot, l2.expert_to_slot, 0);
+                std::fill_n((int *)l2.expert_to_slot, n_experts, DYN_EX_SENTINEL);
+                l2.slot_to_expert.assign(l2.n_l2, DYN_EX_SENTINEL);
+                l2.age.resize(l2.n_l2);
+
+                if (l2.gate_size > 0) {
+                    cudaHostAlloc((void **)&l2.gate_data, l2.gate_size, cudaHostAllocMapped);
+                    cudaHostGetDevicePointer((void **)&l2.d_gate_data, l2.gate_data, 0);
+                }
+                if (l2.up_size > 0) {
+                    cudaHostAlloc((void **)&l2.up_data, l2.up_size, cudaHostAllocMapped);
+                    cudaHostGetDevicePointer((void **)&l2.d_up_data, l2.up_data, 0);
+                }
+                if (l2.down_size > 0) {
+                    cudaHostAlloc((void **)&l2.down_data, l2.down_size, cudaHostAllocMapped);
+                    cudaHostGetDevicePointer((void **)&l2.d_down_data, l2.down_data, 0);
+                }
+                if (l2.gate_up_size > 0) {
+                    cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size, cudaHostAllocMapped);
+                    cudaHostGetDevicePointer((void **)&l2.d_gate_up_data, l2.gate_up_data, 0);
+                }
+                l2.allocated = true;
+            }
+        }
+#endif
     }
 
     {
