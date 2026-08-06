@@ -131,7 +131,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int max_slots  = de->n_l1;
     if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
 
-    for (int i = 0; i < n_e && i < de->n_l1; i++) {
+    for (int i = 0; i < n_e; i++) {
         int eid = (int)de->ids_buf[i];
         if (eid < 0 || eid >= reader->n_experts) { de->slots_buf[i] = -1; continue; }
 
@@ -215,7 +215,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         de->l1_expert[s] = DYN_EX_SENTINEL;
     }
 
-    for (int i = 0; i < n_e && i < de->n_l1; i++) {
+    for (int i = 0; i < n_e; i++) {
         int eid = (int)ids[i];
         if (eid < 0 || eid >= reader->n_experts) continue;
         int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
