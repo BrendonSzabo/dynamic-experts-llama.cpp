@@ -209,6 +209,7 @@ struct dyn_ex_cache {
 #ifdef GGML_USE_CUDA
 void dyn_ex_register_gpu_handler(struct dyn_ex_cache * de);
 void dyn_ex_watchdog_start(struct dyn_ex_cache * de);
+void dyn_ex_barrier_run(struct dyn_ex_cache * de, void * stream, struct ggml_tensor * dst);
 #endif
 
 dyn_ex_cache * dyn_ex_cache_init(

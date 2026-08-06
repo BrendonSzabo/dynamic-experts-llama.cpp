@@ -241,59 +241,50 @@ void dyn_ex_watchdog_start(dyn_ex_cache * de) {
     de->watchdog_stop.store(false, std::memory_order_relaxed);
     de->watchdog_thread = std::thread(dyn_ex_watchdog_loop, de);
 }
-
 static dyn_ex_cache * g_de = nullptr;
 
-static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
-    if (!g_de) return;
+void dyn_ex_barrier_run(dyn_ex_cache * de, void * stream, ggml_tensor * dst) {
+    if (!de) return;
+
     int il   = dst->op_params[0];
     int role = dst->op_params[1];
+
     if (role == 1) {
-        int g = *(volatile int *)g_de->h_claimed_group;
-        if (g >= 0 && g < g_de->n_groups)
+        int g = *(volatile int *)de->h_claimed_group;
+        if (g >= 0 && g < de->n_groups)
             dyn_ex_release_group_kernel<<<1, 1, 0, (cudaStream_t)stream>>>(
-                g_de->d_free_stack, g_de->d_stack_ptr, g);
+                de->d_free_stack, de->d_stack_ptr, g);
         return;
     }
-    if (il < 0 || il >= (int)g_de->l2.size()) return;
+    if (il < 0 || il >= (int)de->l2.size()) return;
 
     ggml_tensor * src      = dst->src[0];
     ggml_tensor * slot_ids = dst->src[1];
     int n_eu = src->ne[0], n_t = src->ne[1];
     if (n_eu <= 0 || n_t <= 0) return;
 
-    g_de->clock++;
-    *(volatile int *)g_de->h_group_ok = -1;
+    de->clock++;
+    *(volatile int *)de->h_group_ok = -1;
 
     if (!d_params_dev) {
         cudaMalloc(&d_params_dev, sizeof(gpu_dyn_ex_params));
-        d_params_host.l1_gate    = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
-        d_params_host.l1_up      = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
-        d_params_host.l1_gate_up = g_de->l1_gate_up ? (uint8_t *)g_de->l1_gate_up->data : nullptr;
-        for (int d = 0; d < g_de->n_down_families; d++)
-            d_params_host.l1_down[d] = g_de->l1_down[d] ? (uint8_t *)g_de->l1_down[d]->data : nullptr;
-        d_params_host.l1_str_gate    = g_de->l1_stride_gate;
-        d_params_host.l1_str_up      = g_de->l1_stride_up;
-        d_params_host.l1_str_gate_up = g_de->l1_stride_gate_up;
-        for (int d = 0; d < g_de->n_down_families; d++)
-            d_params_host.l1_str_down[d] = g_de->l1_stride_down_arr[d];
-        d_params_host.n_down_families = g_de->n_down_families;
+        d_params_host.l1_gate    = de->l1_gate    ? (uint8_t *)de->l1_gate->data    : nullptr;
+        d_params_host.l1_up      = de->l1_up      ? (uint8_t *)de->l1_up->data      : nullptr;
+        d_params_host.l1_gate_up = de->l1_gate_up ? (uint8_t *)de->l1_gate_up->data : nullptr;
+        for (int d = 0; d < de->n_down_families; d++)
+            d_params_host.l1_down[d] = de->l1_down[d] ? (uint8_t *)de->l1_down[d]->data : nullptr;
+        d_params_host.l1_str_gate    = de->l1_stride_gate;
+        d_params_host.l1_str_up      = de->l1_stride_up;
+        d_params_host.l1_str_gate_up = de->l1_stride_gate_up;
+        for (int d = 0; d < de->n_down_families; d++)
+            d_params_host.l1_str_down[d] = de->l1_stride_down_arr[d];
+        d_params_host.n_down_families = de->n_down_families;
         cudaMemcpy(d_params_dev, &d_params_host, sizeof(gpu_dyn_ex_params), cudaMemcpyHostToDevice);
-        fprintf(stderr, "[dyn-ex] d_params: l1_g=%p sg=%lu l1_u=%p su=%lu l1_gu=%p sgu=%lu nd=%d\n",
-            (void*)d_params_host.l1_gate, (unsigned long)d_params_host.l1_str_gate,
-            (void*)d_params_host.l1_up, (unsigned long)d_params_host.l1_str_up,
-            (void*)d_params_host.l1_gate_up, (unsigned long)d_params_host.l1_str_gate_up,
-            d_params_host.n_down_families);
     }
 
-    auto & l2 = g_de->l2[il];
-    int total = n_eu * n_t;
-    int block = 256, grid = (total + block - 1) / block;
+    auto & l2 = de->l2[il];
+    int total = n_eu * n_t, block = 256, grid = (total + block - 1) / block;
     if (grid > 65535) grid = 1;
-
-    fprintf(stderr, "[dyn-ex] L%d launch: grid=%d n_eu=%d n_t=%d l2g=%p l2u=%p l2d=%p l2gu=%p\n",
-        il, grid, n_eu, n_t, (void*)l2.d_gate_data, (void*)l2.d_up_data,
-        (void*)l2.d_down_data, (void*)l2.d_gate_up_data);
 
     dyn_ex_slot_assign_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
         d_params_dev,
@@ -301,19 +292,22 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
         l2.d_expert_to_slot,
         l2.d_gate_data, l2.d_up_data, l2.d_down_data, l2.d_gate_up_data,
         l2.gate_size, l2.up_size, l2.down_size, l2.gate_up_size,
-        g_de->d_l1_expert_to_slot, g_de->d_l1_slot_to_expert,
-        (struct gpu_miss_entry *)g_de->d_miss_buf, g_de->d_miss_count,
-        g_de->d_sync_flag,
-        g_de->d_free_stack, g_de->d_stack_ptr,
-        g_de->d_claimed_group,
-        g_de->d_group_ok, g_de->d_group_base,
-        n_eu, n_t, g_de->n_groups, g_de->n_experts, il);
+        de->d_l1_expert_to_slot, de->d_l1_slot_to_expert,
+        (struct gpu_miss_entry *)de->d_miss_buf, de->d_miss_count,
+        de->d_sync_flag,
+        de->d_free_stack, de->d_stack_ptr,
+        de->d_claimed_group,
+        de->d_group_ok, de->d_group_base,
+        n_eu, n_t, de->n_groups, de->n_experts, il);
 
     cudaError_t launch_err = cudaGetLastError();
     if (launch_err != cudaSuccess)
         fprintf(stderr, "[dyn-ex] L%d launch error: %s\n", il, cudaGetErrorString(launch_err));
 }
 
+static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
+    dyn_ex_barrier_run(g_de, stream, dst);
+}
 void dyn_ex_register_gpu_handler(dyn_ex_cache * de) {
     g_de = de;
     ggml_cuda_set_dyn_ex_barrier(dyn_ex_barrier_handler);

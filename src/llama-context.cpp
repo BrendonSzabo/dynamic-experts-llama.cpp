@@ -98,9 +98,11 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (!de) return true;
 
 #ifdef GGML_USE_CUDA
-    // Miss handling is done by the background watchdog thread.
-    // The handler just launches the kernel and returns immediately.
-    return true;
+    // Run barrier synchronously on prefetch stream, outside graph capture scope.
+    // Return false so the scheduler skips dispatching to the CUDA backend.
+    dyn_ex_barrier_run(de, de->prefetch_stream, t);
+    cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+    return false;
 #else
     if (role == 1) {
         if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
