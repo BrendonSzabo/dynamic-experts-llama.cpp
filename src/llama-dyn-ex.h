@@ -10,7 +10,6 @@
 #include <deque>
 #include <functional>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 // dyn-ex: .bin file reader for VLLM\x02 expert weight format (produced by convert-gguf-to-expert-binary.py)
@@ -198,17 +197,12 @@ struct dyn_ex_cache {
     // stream event for host sync without full device stall
     void * sync_event = nullptr;
 
-    // background watchdog thread for miss handling
-    std::thread  watchdog_thread;
-    std::atomic<bool> watchdog_stop{false};
-
     static void release_group(int * d_stack, int * d_stack_ptr, int group_idx, void * stream);
 #endif
 };
 
 #ifdef GGML_USE_CUDA
 void dyn_ex_register_gpu_handler(struct dyn_ex_cache * de);
-void dyn_ex_watchdog_start(struct dyn_ex_cache * de);
 void dyn_ex_barrier_run(struct dyn_ex_cache * de, void * stream, struct ggml_tensor * dst);
 #endif
 
