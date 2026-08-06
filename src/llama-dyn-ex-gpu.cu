@@ -290,12 +290,25 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
         return;
     }
 
+    if (il < 0 || il >= (int)g_de->l2.size()) {
+        fprintf(stderr, "[dyn-ex] bad il=%d, l2.size=%zu\n", il, g_de->l2.size());
+        return;
+    }
+
     ggml_tensor * src      = dst->src[0];
     ggml_tensor * slot_ids = dst->src[1];
     auto & l2 = g_de->l2[il];
 
     int n_eu = src->ne[0];
     int n_t  = src->ne[1];
+
+    fprintf(stderr, "[dyn-ex] layer %d: n_eu=%d n_t=%d total=%d g_groups=%d n_experts=%d\n",
+            il, n_eu, n_t, n_eu * n_t, g_de->n_groups, g_de->n_experts);
+
+    if (n_eu <= 0 || n_t <= 0 || n_eu > 1024 || n_t > 16384) {
+        fprintf(stderr, "[dyn-ex] layer %d: bad tensor dims, skipping barrier\n", il);
+        return;
+    }
 
     g_de->clock++;
     *g_de->h_miss_count = 0;
@@ -305,6 +318,10 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     int total = n_eu * n_t;
     int block = 256;
     int grid  = (total + block - 1) / block;
+    if (grid > 65535) {
+        fprintf(stderr, "[dyn-ex] layer %d: absurd grid=%d, capping to 1\n", il, grid);
+        grid = 1;
+    }
 
     uint8_t * l1_g  = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
     uint8_t * l1_u  = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
