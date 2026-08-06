@@ -151,22 +151,22 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
             int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
 
-            auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
+            auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_stride) {
                 if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
                 size_t sz = tt->nb[2];
                 if (l2_slot >= 0 && l2_data) {
                     cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
-                        l2_data + (size_t)l2_slot * l2_row, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                        l2_data + (size_t)l2_slot * l2_stride, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
                 } else {
                     dyn_ex_read_param(reader, pi, il, eid, de->cpu_buf.data(), sz);
                     cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
                         de->cpu_buf.data(), sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
                 }
             };
-            copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
-            copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
-            copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
-            copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+            copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_size);
+            copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_size);
+            copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_size);
+            copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_size);
 
             de->l1_expert[slot] = eid;
             de->l1_layer[slot]  = il;
@@ -226,20 +226,20 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
         int l1_slot = base_slot + i;
 
-        auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
+        auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_stride) {
             if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
             size_t sz = tt->nb[2];
             if (l2_slot >= 0 && l2_data) {
-                memcpy((char *)tt->data + (size_t)l1_slot * sz, l2_data + (size_t)l2_slot * l2_row, sz);
+                memcpy((char *)tt->data + (size_t)l1_slot * sz, l2_data + (size_t)l2_slot * l2_stride, sz);
             } else {
                 dyn_ex_read_param(reader, pi, il, eid, cpu_buf.data(), sz);
                 memcpy((char *)tt->data + (size_t)l1_slot * sz, cpu_buf.data(), sz);
             }
         };
-        copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
-        copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
-        copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
-        copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+        copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_size);
+        copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_size);
+        copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_size);
+        copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_size);
 
         de->l1_expert[l1_slot] = eid;
         de->l1_layer[l1_slot]  = il;
