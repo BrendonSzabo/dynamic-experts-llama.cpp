@@ -7,6 +7,21 @@
 
 struct gpu_miss_entry { int layer; int expert_id; int target_l1_slot; };
 
+// fixed kernel params stored in device memory, populated once during init
+struct gpu_dyn_ex_params {
+    uint8_t * l1_gate;
+    uint8_t * l1_up;
+    uint8_t * l1_down[4];
+    uint8_t * l1_gate_up;
+    size_t l1_str_gate;
+    size_t l1_str_up;
+    size_t l1_str_down[4];
+    size_t l1_str_gate_up;
+    int    n_down_families;
+};
+static gpu_dyn_ex_params   d_params_host;
+static gpu_dyn_ex_params * d_params_dev = nullptr;
+
 static __device__ void copy_family(
     uint8_t * l1_dst, const uint8_t * l1_src,
     int src_slot, int dst_slot,
@@ -19,26 +34,12 @@ static __device__ void copy_family(
     for (size_t i = 0; i < stride; i++) dst[i] = src[i];
 }
 
-// pick the non-null down pointer and its matching stride
-static __device__ void pick_down(
-    uint8_t ** d_ptr, size_t * d_str,
-    uint8_t * da, size_t sa,
-    uint8_t * db, size_t sb) {
-    if (da) { *d_ptr = da; *d_str = sa; }
-    else     { *d_ptr = db; *d_str = sb; }
-}
-
 __global__ void dyn_ex_slot_assign_kernel(
+    const struct gpu_dyn_ex_params * p,
     const int32_t * selected_experts, int32_t * slot_ids,
     const int * expert_to_slot,
     const uint8_t * l2_gate, const uint8_t * l2_up,
     const uint8_t * l2_down, const uint8_t * l2_gate_up,
-    uint8_t * l1_gate, uint8_t * l1_up,
-    uint8_t * l1_down_a, uint8_t * l1_down_b,
-    uint8_t * l1_gate_up,
-    size_t l1_str_gate, size_t l1_str_up,
-    size_t l1_str_down_a, size_t l1_str_down_b,
-    size_t l1_str_gate_up,
     size_t l2_str_gate, size_t l2_str_up,
     size_t l2_str_down, size_t l2_str_gate_up,
     int * l1_expert_to_slot,
@@ -53,7 +54,6 @@ __global__ void dyn_ex_slot_assign_kernel(
     int s_base;
     bool s_ok;
 
-    // block 0 claims a group, writes s_base to global memory for all blocks
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         int g = atomicSub(d_stack_ptr, 1) - 1;
         s_ok = (g >= 0 && g < n_groups);
@@ -75,10 +75,8 @@ __global__ void dyn_ex_slot_assign_kernel(
         *d_group_ok = s_ok ? 1 : 0;
     }
 
-    // all threads in all blocks wait for block 0 to signal
-    if (blockIdx.x > 0 || threadIdx.x > 0) {
+    if (blockIdx.x > 0 || threadIdx.x > 0)
         while (*(volatile int *)d_group_ok == -1) {}
-    }
     __threadfence();
 
     s_ok   = (*d_group_ok == 1);
@@ -111,15 +109,14 @@ __global__ void dyn_ex_slot_assign_kernel(
         ? l1_expert_to_slot[expert_id] : -1;
     if (l1_src >= n_l1) l1_src = -1;
 
-    // resolve which down tensor / stride to use for this layer
-    uint8_t * l1_down; size_t l1_str_down;
-    pick_down(&l1_down, &l1_str_down, l1_down_a, l1_str_down_a, l1_down_b, l1_str_down_b);
+    uint8_t * l1_dn   = p->l1_down[0] ? p->l1_down[0] : p->l1_down[1];
+    size_t l1_str_dn = p->l1_down[0] ? p->l1_str_down[0] : p->l1_str_down[1];
 
     if (l1_src >= 0 && l1_src != l1_slot) {
-        copy_family(l1_gate,    l1_gate,    l1_src, l1_slot, l1_str_gate,    0);
-        copy_family(l1_up,      l1_up,      l1_src, l1_slot, l1_str_up,      0);
-        copy_family(l1_down,    l1_down,    l1_src, l1_slot, l1_str_down,    0);
-        copy_family(l1_gate_up, l1_gate_up, l1_src, l1_slot, l1_str_gate_up, 0);
+        copy_family(p->l1_gate,    p->l1_gate,    l1_src, l1_slot, p->l1_str_gate,    0);
+        copy_family(p->l1_up,      p->l1_up,      l1_src, l1_slot, p->l1_str_up,      0);
+        copy_family(l1_dn,         l1_dn,         l1_src, l1_slot, l1_str_dn,          0);
+        copy_family(p->l1_gate_up, p->l1_gate_up, l1_src, l1_slot, p->l1_str_gate_up, 0);
         l1_expert_to_slot[expert_id] = l1_slot;
         if (l1_slot_to_expert) {
             l1_slot_to_expert[l1_src]  = DYN_EX_SENTINEL;
@@ -128,10 +125,10 @@ __global__ void dyn_ex_slot_assign_kernel(
     } else {
         int ls = expert_to_slot[expert_id];
         if (ls >= 0) {
-            copy_family(l1_gate,    l2_gate,    ls, l1_slot, l1_str_gate,    l2_str_gate);
-            copy_family(l1_up,      l2_up,      ls, l1_slot, l1_str_up,      l2_str_up);
-            copy_family(l1_down,    l2_down,    ls, l1_slot, l1_str_down,    l2_str_down);
-            copy_family(l1_gate_up, l2_gate_up, ls, l1_slot, l1_str_gate_up, l2_str_gate_up);
+            copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
+            copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
+            copy_family(l1_dn,         l2_down,       ls, l1_slot, l1_str_dn,         l2_str_down);
+            copy_family(p->l1_gate_up, l2_gate_up,    ls, l1_slot, p->l1_str_gate_up, l2_str_gate_up);
             l1_expert_to_slot[expert_id] = l1_slot;
             if (l1_slot_to_expert) l1_slot_to_expert[l1_slot] = expert_id;
         } else {
@@ -155,10 +152,10 @@ __global__ void dyn_ex_slot_assign_kernel(
     if (*miss_count > 0) {
         int ls = *(volatile int *)&expert_to_slot[expert_id];
         if (ls >= 0) {
-            copy_family(l1_gate,    l2_gate,    ls, l1_slot, l1_str_gate,    l2_str_gate);
-            copy_family(l1_up,      l2_up,      ls, l1_slot, l1_str_up,      l2_str_up);
-            copy_family(l1_down,    l2_down,    ls, l1_slot, l1_str_down,    l2_str_down);
-            copy_family(l1_gate_up, l2_gate_up, ls, l1_slot, l1_str_gate_up, l2_str_gate_up);
+            copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
+            copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
+            copy_family(l1_dn,         l2_down,       ls, l1_slot, l1_str_dn,         l2_str_down);
+            copy_family(p->l1_gate_up, l2_gate_up,    ls, l1_slot, p->l1_str_gate_up, l2_str_gate_up);
             l1_expert_to_slot[expert_id] = l1_slot;
             if (l1_slot_to_expert) l1_slot_to_expert[l1_slot] = expert_id;
         }
@@ -264,7 +261,6 @@ static void dyn_ex_watchdog_loop(dyn_ex_cache * de) {
             int n = *(volatile int *)de->h_miss_count;
             handle_misses(de, n, layer);
         }
-        // brief yield to avoid burning CPU
         std::this_thread::yield();
     }
 }
@@ -292,53 +288,45 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
         return;
     }
 
-    if (il < 0 || il >= (int)g_de->l2.size()) {
-        fprintf(stderr, "[dyn-ex] bad il=%d, l2.size=%zu\n", il, g_de->l2.size());
-        return;
-    }
+    if (il < 0 || il >= (int)g_de->l2.size()) return;
 
     ggml_tensor * src      = dst->src[0];
     ggml_tensor * slot_ids = dst->src[1];
-    auto & l2 = g_de->l2[il];
 
     int n_eu = src->ne[0];
     int n_t  = src->ne[1];
-
-    fprintf(stderr, "[dyn-ex] layer %d: n_eu=%d n_t=%d total=%d g_groups=%d n_experts=%d\n",
-            il, n_eu, n_t, n_eu * n_t, g_de->n_groups, g_de->n_experts);
-
-    if (n_eu <= 0 || n_t <= 0 || n_eu > 1024 || n_t > 16384) {
-        fprintf(stderr, "[dyn-ex] layer %d: bad tensor dims, skipping barrier\n", il);
-        return;
-    }
+    if (n_eu <= 0 || n_t <= 0 || n_eu > 1024 || n_t > 16384) return;
 
     g_de->clock++;
     *(volatile int *)g_de->h_group_ok = -1;
 
+    if (!d_params_dev) {
+        cudaMalloc(&d_params_dev, sizeof(gpu_dyn_ex_params));
+        d_params_host.l1_gate    = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
+        d_params_host.l1_up      = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
+        d_params_host.l1_gate_up = g_de->l1_gate_up ? (uint8_t *)g_de->l1_gate_up->data : nullptr;
+        for (int d = 0; d < g_de->n_down_families; d++)
+            d_params_host.l1_down[d] = g_de->l1_down[d] ? (uint8_t *)g_de->l1_down[d]->data : nullptr;
+        d_params_host.l1_str_gate    = g_de->l1_stride_gate;
+        d_params_host.l1_str_up      = g_de->l1_stride_up;
+        d_params_host.l1_str_gate_up = g_de->l1_stride_gate_up;
+        for (int d = 0; d < g_de->n_down_families; d++)
+            d_params_host.l1_str_down[d] = g_de->l1_stride_down_arr[d];
+        d_params_host.n_down_families = g_de->n_down_families;
+        cudaMemcpy(d_params_dev, &d_params_host, sizeof(gpu_dyn_ex_params), cudaMemcpyHostToDevice);
+    }
+
+    auto & l2 = g_de->l2[il];
     int total = n_eu * n_t;
     int block = 256;
     int grid  = (total + block - 1) / block;
-    if (grid > 65535) {
-        fprintf(stderr, "[dyn-ex] layer %d: absurd grid=%d, capping to 1\n", il, grid);
-        grid = 1;
-    }
-
-    uint8_t * l1_g  = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
-    uint8_t * l1_u  = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
-    uint8_t * l1_da = g_de->l1_down[0] ? (uint8_t *)g_de->l1_down[0]->data : nullptr;
-    uint8_t * l1_db = (g_de->n_down_families > 1 && g_de->l1_down[1])
-        ? (uint8_t *)g_de->l1_down[1]->data : nullptr;
-    uint8_t * l1_gu = g_de->l1_gate_up ? (uint8_t *)g_de->l1_gate_up->data : nullptr;
+    if (grid > 65535) grid = 1;
 
     dyn_ex_slot_assign_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
+        d_params_dev,
         (const int32_t *)src->data, (int32_t *)slot_ids->data,
         l2.d_expert_to_slot,
         l2.d_gate_data, l2.d_up_data, l2.d_down_data, l2.d_gate_up_data,
-        l1_g, l1_u, l1_da, l1_db, l1_gu,
-        g_de->l1_stride_gate, g_de->l1_stride_up,
-        g_de->l1_stride_down_arr[0],
-        (g_de->n_down_families > 1) ? g_de->l1_stride_down_arr[1] : 0,
-        g_de->l1_stride_gate_up,
         l2.gate_size, l2.up_size, l2.down_size, l2.gate_up_size,
         g_de->d_l1_expert_to_slot,
         g_de->d_l1_slot_to_expert,
@@ -353,7 +341,6 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     if (launch_err != cudaSuccess) {
         fprintf(stderr, "[dyn-ex] layer %d: launch error: %s\n", il, cudaGetErrorString(launch_err));
     }
-    cudaDeviceSynchronize();
 }
 
 void dyn_ex_register_gpu_handler(dyn_ex_cache * de) {
