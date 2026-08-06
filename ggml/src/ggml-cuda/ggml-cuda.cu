@@ -5470,8 +5470,16 @@ __global__ void dyn_ex_barrier_kernel(
     __syncthreads();
 }
 
+static void (*g_dyn_ex_barrier_fn)(void *, ggml_tensor *) = nullptr;
+
+void ggml_cuda_set_dyn_ex_barrier(void (*fn)(void *, ggml_tensor *)) {
+    g_dyn_ex_barrier_fn = fn;
+}
+
 static void ggml_cuda_op_dyn_ex_barrier(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    (void)ctx; (void)dst;
+    if (g_dyn_ex_barrier_fn) {
+        g_dyn_ex_barrier_fn((void *)ctx.stream(), dst);
+    }
 }
 
 GGML_BACKEND_DL_IMPL(ggml_backend_cuda_reg)

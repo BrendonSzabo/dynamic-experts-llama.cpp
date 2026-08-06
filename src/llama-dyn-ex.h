@@ -160,6 +160,9 @@ struct dyn_ex_cache {
     int * h_miss_count = nullptr;
     int * d_miss_count = nullptr;
 
+    int * h_claimed_group = nullptr;
+    int * d_claimed_group = nullptr;
+
     // busy-wait sync flags (pinned, device-visible)
     int * h_sync_flag     = nullptr;
     int * d_sync_flag     = nullptr;
@@ -198,6 +201,10 @@ struct dyn_ex_cache {
     static void release_group(int * d_stack, int * d_stack_ptr, int group_idx, void * stream);
 #endif
 };
+
+#ifdef GGML_USE_CUDA
+void dyn_ex_register_gpu_handler(struct dyn_ex_cache * de);
+#endif
 
 dyn_ex_cache * dyn_ex_cache_init(
     struct dyn_ex_reader * reader,

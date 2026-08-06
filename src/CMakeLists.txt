@@ -45,6 +45,17 @@ add_library(llama
             ${LLAMA_MODELS_SOURCES}
             )
 
+if (GGML_CUDA)
+    enable_language(CUDA)
+    if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native")
+    endif()
+    set_target_properties(llama PROPERTIES CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
+    target_sources(llama PRIVATE llama-dyn-ex-gpu.cu)
+    set_source_files_properties(llama-dyn-ex-gpu.cu PROPERTIES LANGUAGE CUDA)
+    target_include_directories(llama PRIVATE ${CMAKE_SOURCE_DIR}/ggml/include)
+endif()
+
 set_target_properties(llama PROPERTIES
     VERSION ${LLAMA_INSTALL_VERSION}
     SOVERSION 0

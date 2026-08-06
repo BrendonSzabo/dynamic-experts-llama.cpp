@@ -1195,6 +1195,9 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 cudaHostGetDevicePointer((void **)&de.d_miss_count, de.h_miss_count, 0);
                 *de.h_miss_count = 0;
 
+            cudaHostAlloc((void **)&de.h_claimed_group, sizeof(int), cudaHostAllocMapped);
+            cudaHostGetDevicePointer((void **)&de.d_claimed_group, (void *)de.h_claimed_group, 0);
+
             cudaHostAlloc((void **)&de.h_sync_flag, sizeof(int), cudaHostAllocMapped);
             cudaHostGetDevicePointer((void **)&de.d_sync_flag, (void *)de.h_sync_flag, 0);
             cudaHostAlloc((void **)&de.h_misses_posted, sizeof(int), cudaHostAllocMapped);

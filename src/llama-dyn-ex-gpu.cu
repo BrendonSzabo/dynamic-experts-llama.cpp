@@ -170,4 +170,100 @@ void dyn_ex_cache::release_group(int * d_stack, int * d_stack_ptr, int group_idx
     dyn_ex_release_group_kernel<<<1, 1, 0, (cudaStream_t)stream>>>(d_stack, d_stack_ptr, group_idx);
 }
 
+static dyn_ex_cache * g_de = nullptr;
+
+static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
+    GGML_UNUSED(stream);
+    if (!g_de) return;
+
+    int il   = dst->op_params[0];
+    int role = dst->op_params[1];
+    ggml_tensor * src      = dst->src[0];
+    ggml_tensor * slot_ids = dst->src[1];
+
+    if (role == 1) {
+        int g = *(volatile int *)g_de->h_claimed_group;
+        if (g >= 0 && g < g_de->n_groups) {
+            dyn_ex_release_group_kernel<<<1, 1>>>(
+                g_de->d_free_stack, g_de->d_stack_ptr, g);
+        }
+        return;
+    }
+
+    int n_expert_used = src->ne[0];
+    int n_tokens      = src->ne[1];
+    auto & l2 = g_de->l2[il];
+
+    *g_de->h_miss_count = 0;
+    *((volatile int *)g_de->h_sync_flag) = 0;
+
+    int total = n_expert_used * n_tokens;
+    int block = 256;
+    int grid  = (total + block - 1) / block;
+
+    dyn_ex_slot_assign_kernel<<<grid, block>>>(
+        (const int32_t *)src->data, (int32_t *)slot_ids->data,
+        l2.d_expert_to_slot,
+        l2.d_gate_data, l2.d_up_data, l2.d_down_data, l2.d_gate_up_data,
+        (uint8_t *)(g_de->l1_gate    ? g_de->l1_gate->data    : nullptr),
+        (uint8_t *)(g_de->l1_up      ? g_de->l1_up->data      : nullptr),
+        (uint8_t *)(g_de->l1_down_q4 ? g_de->l1_down_q4->data : nullptr),
+        (uint8_t *)(g_de->l1_gate_up ? g_de->l1_gate_up->data : nullptr),
+        g_de->l1_stride_gate, g_de->l1_stride_up,
+        g_de->l1_stride_down, g_de->l1_stride_gate_up,
+        l2.gate_row, l2.up_row, l2.down_row, l2.gate_up_row,
+        (struct gpu_miss_entry *)g_de->d_miss_buf, g_de->d_miss_count,
+        (volatile int *)g_de->d_sync_flag,
+        g_de->d_free_stack, g_de->d_stack_ptr,
+        g_de->d_claimed_group,
+        n_expert_used, n_tokens, g_de->n_groups, g_de->n_experts, il);
+
+    while (*((volatile int *)g_de->h_sync_flag) == 0) { /* wait for kernel to post misses */ }
+
+    int n = *((volatile int *)g_de->h_miss_count);
+    if (n > g_de->MISS_BUF_SIZE) n = g_de->MISS_BUF_SIZE;
+    for (int i = 0; i < n; i++) {
+        int expert_id = g_de->h_miss_buf[i].expert_id;
+        if (expert_id < 0 || expert_id >= g_de->reader->n_experts) continue;
+
+        int victim = -1;
+        for (int s = 0; s < g_de->n_l2; s++) {
+            if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
+        }
+        if (victim < 0) {
+            uint64_t oldest = UINT64_MAX;
+            for (int s = 0; s < g_de->n_l2; s++) {
+                if (l2.age[s] < oldest) { oldest = l2.age[s]; victim = s; }
+            }
+            int evicted = l2.slot_to_expert[victim];
+            if (evicted >= 0) l2.expert_to_slot[evicted] = DYN_EX_SENTINEL;
+        }
+        l2.slot_to_expert[victim] = expert_id;
+        l2.expert_to_slot[expert_id] = victim;
+        l2.age[victim] = g_de->clock;
+
+        if (g_de->pi_gate >= 0 && l2.gate_size > 0)
+            dyn_ex_read_param(g_de->reader, g_de->pi_gate, il, expert_id,
+                l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
+        if (g_de->pi_up >= 0 && l2.up_size > 0)
+            dyn_ex_read_param(g_de->reader, g_de->pi_up, il, expert_id,
+                l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
+        if (g_de->pi_down >= 0 && l2.down_size > 0)
+            dyn_ex_read_param(g_de->reader, g_de->pi_down, il, expert_id,
+                l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
+        if (g_de->pi_gate_up >= 0 && l2.gate_up_size > 0)
+            dyn_ex_read_param(g_de->reader, g_de->pi_gate_up, il, expert_id,
+                l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
+    }
+    *((volatile int *)g_de->h_miss_count) = 0;
+    *((volatile int *)g_de->h_sync_flag) = 0;
+
+    cudaDeviceSynchronize();
+}
+
+void dyn_ex_register_gpu_handler(dyn_ex_cache * de) {
+    g_de = de;
+    ggml_cuda_set_dyn_ex_barrier(dyn_ex_barrier_handler);
+}
+
 #endif // GGML_USE_CUDA
