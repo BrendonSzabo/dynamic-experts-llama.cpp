@@ -124,6 +124,8 @@ __global__ void dyn_ex_slot_assign_kernel(
         }
     } else {
         int ls = expert_to_slot[expert_id];
+        if (tid == 0) printf("[dyn-ex] L%d tid=%d eid=%d ls=%d l1_slot=%d n_experts=%d\n",
+                              layer, tid, expert_id, ls, l1_slot, n_experts);
         if (ls >= 0) {
             copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
             copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
@@ -151,6 +153,8 @@ __global__ void dyn_ex_slot_assign_kernel(
     __threadfence_system();
     if (*miss_count > 0) {
         int ls = *(volatile int *)&expert_to_slot[expert_id];
+        if (tid == 0) printf("[dyn-ex] L%d retry: eid=%d ls=%d miss=%d\n",
+                              layer, expert_id, ls, *miss_count);
         if (ls >= 0) {
             copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
             copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
