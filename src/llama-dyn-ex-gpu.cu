@@ -19,35 +19,70 @@ static __device__ void copy_family(
     for (size_t i = 0; i < stride; i++) dst[i] = src[i];
 }
 
+// pick the non-null down pointer and its matching stride
+static __device__ void pick_down(
+    uint8_t ** d_ptr, size_t * d_str,
+    uint8_t * da, size_t sa,
+    uint8_t * db, size_t sb) {
+    if (da) { *d_ptr = da; *d_str = sa; }
+    else     { *d_ptr = db; *d_str = sb; }
+}
+
 __global__ void dyn_ex_slot_assign_kernel(
     const int32_t * selected_experts, int32_t * slot_ids,
     const int * expert_to_slot,
     const uint8_t * l2_gate, const uint8_t * l2_up,
     const uint8_t * l2_down, const uint8_t * l2_gate_up,
     uint8_t * l1_gate, uint8_t * l1_up,
-    uint8_t * l1_down, uint8_t * l1_gate_up,
+    uint8_t * l1_down_a, uint8_t * l1_down_b,
+    uint8_t * l1_gate_up,
     size_t l1_str_gate, size_t l1_str_up,
-    size_t l1_str_down, size_t l1_str_gate_up,
+    size_t l1_str_down_a, size_t l1_str_down_b,
+    size_t l1_str_gate_up,
     size_t l2_str_gate, size_t l2_str_up,
     size_t l2_str_down, size_t l2_str_gate_up,
     int * l1_expert_to_slot,
+    int * l1_slot_to_expert,
     struct gpu_miss_entry * miss_buf, int * miss_count,
     int * flag,
     int * d_free_stack, int * d_stack_ptr,
     int * d_claimed_group,
+    int * d_group_ok, int * d_group_base,
     int n_expert_used, int n_tokens, int n_groups, int n_experts, int layer) {
 
-    __shared__ int s_base;
-    __shared__ bool s_ok;
+    int s_base;
+    bool s_ok;
 
+    // block 0 claims a group, writes s_base to global memory for all blocks
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         int g = atomicSub(d_stack_ptr, 1) - 1;
         s_ok = (g >= 0 && g < n_groups);
-        if (s_ok) s_base = g * n_expert_used;
+        if (s_ok) {
+            s_base = g * n_expert_used;
+            *d_group_base = s_base;
+            int slot_end = s_base + n_expert_used;
+            if (l1_slot_to_expert) {
+                for (int s = s_base; s < slot_end; s++) {
+                    int eid = l1_slot_to_expert[s];
+                    if (eid == DYN_EX_SENTINEL) continue;
+                    if (l1_expert_to_slot) l1_expert_to_slot[eid] = DYN_EX_SENTINEL;
+                    l1_slot_to_expert[s] = DYN_EX_SENTINEL;
+                }
+            }
+        }
         *d_claimed_group = g;
+        __threadfence();
+        *d_group_ok = s_ok ? 1 : 0;
     }
-    __syncthreads();
-    if (!s_ok) return;
+
+    // all threads in all blocks wait for block 0 to signal
+    if (blockIdx.x > 0 || threadIdx.x > 0) {
+        while (*(volatile int *)d_group_ok == -1) {}
+    }
+    __threadfence();
+
+    s_ok   = (*d_group_ok == 1);
+    s_base = s_ok ? *d_group_base : 0;
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int total = n_expert_used * n_tokens;
@@ -55,6 +90,12 @@ __global__ void dyn_ex_slot_assign_kernel(
 
     int e = tid % n_expert_used;
     int t = tid / n_expert_used;
+
+    if (!s_ok) {
+        slot_ids[t * n_expert_used + e] = -1;
+        return;
+    }
+
     int expert_id = selected_experts[t * n_expert_used + e];
     int l1_slot = s_base + e;
 
@@ -68,12 +109,20 @@ __global__ void dyn_ex_slot_assign_kernel(
     int l1_src = (l1_expert_to_slot && expert_id < n_experts)
         ? l1_expert_to_slot[expert_id] : -1;
 
+    // resolve which down tensor / stride to use for this layer
+    uint8_t * l1_down; size_t l1_str_down;
+    pick_down(&l1_down, &l1_str_down, l1_down_a, l1_str_down_a, l1_down_b, l1_str_down_b);
+
     if (l1_src >= 0 && l1_src != l1_slot) {
         copy_family(l1_gate,    l1_gate,    l1_src, l1_slot, l1_str_gate,    0);
         copy_family(l1_up,      l1_up,      l1_src, l1_slot, l1_str_up,      0);
         copy_family(l1_down,    l1_down,    l1_src, l1_slot, l1_str_down,    0);
         copy_family(l1_gate_up, l1_gate_up, l1_src, l1_slot, l1_str_gate_up, 0);
         l1_expert_to_slot[expert_id] = l1_slot;
+        if (l1_slot_to_expert) {
+            l1_slot_to_expert[l1_src]  = DYN_EX_SENTINEL;
+            l1_slot_to_expert[l1_slot] = expert_id;
+        }
     } else {
         int ls = expert_to_slot[expert_id];
         if (ls >= 0) {
@@ -82,11 +131,14 @@ __global__ void dyn_ex_slot_assign_kernel(
             copy_family(l1_down,    l2_down,    ls, l1_slot, l1_str_down,    l2_str_down);
             copy_family(l1_gate_up, l2_gate_up, ls, l1_slot, l1_str_gate_up, l2_str_gate_up);
             l1_expert_to_slot[expert_id] = l1_slot;
+            if (l1_slot_to_expert) l1_slot_to_expert[l1_slot] = expert_id;
         } else {
             int idx = atomicAdd(miss_count, 1);
-            miss_buf[idx].layer = layer;
-            miss_buf[idx].expert_id = expert_id;
-            miss_buf[idx].target_l1_slot = l1_slot;
+            if (idx < dyn_ex_cache::MISS_BUF_SIZE) {
+                miss_buf[idx].layer          = layer;
+                miss_buf[idx].expert_id      = expert_id;
+                miss_buf[idx].target_l1_slot = l1_slot;
+            }
         }
     }
 
@@ -106,6 +158,7 @@ __global__ void dyn_ex_slot_assign_kernel(
             copy_family(l1_down,    l2_down,    ls, l1_slot, l1_str_down,    l2_str_down);
             copy_family(l1_gate_up, l2_gate_up, ls, l1_slot, l1_str_gate_up, l2_str_gate_up);
             l1_expert_to_slot[expert_id] = l1_slot;
+            if (l1_slot_to_expert) l1_slot_to_expert[l1_slot] = expert_id;
         }
     }
 }
@@ -145,9 +198,11 @@ __global__ void dyn_ex_prefetch_kernel(
         l1_expert_to_slot[expert_id] = prefetch_slot;
     } else {
         int idx = atomicAdd(miss_count, 1);
-        miss_buf[idx].layer = layer;
-        miss_buf[idx].expert_id = expert_id;
-        miss_buf[idx].target_l1_slot = prefetch_slot;
+        if (idx < dyn_ex_cache::MISS_BUF_SIZE) {
+            miss_buf[idx].layer          = layer;
+            miss_buf[idx].expert_id      = expert_id;
+            miss_buf[idx].target_l1_slot = prefetch_slot;
+        }
     }
 }
 
@@ -186,29 +241,36 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
 
     *g_de->h_miss_count = 0;
     *(volatile int *)g_de->h_sync_flag = 0;
+    *(volatile int *)g_de->h_group_ok = -1;
 
     int total = n_eu * n_t;
     int block = 256;
     int grid  = (total + block - 1) / block;
 
-    uint8_t * l1_g = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
-    uint8_t * l1_u = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
-    uint8_t * l1_d = g_de->l1_down_q4 ? (uint8_t *)g_de->l1_down_q4->data : nullptr;
-    uint8_t * l1_gu= g_de->l1_gate_up ? (uint8_t *)g_de->l1_gate_up->data : nullptr;
+    uint8_t * l1_g  = g_de->l1_gate    ? (uint8_t *)g_de->l1_gate->data    : nullptr;
+    uint8_t * l1_u  = g_de->l1_up      ? (uint8_t *)g_de->l1_up->data      : nullptr;
+    uint8_t * l1_da = g_de->l1_down[0] ? (uint8_t *)g_de->l1_down[0]->data : nullptr;
+    uint8_t * l1_db = (g_de->n_down_families > 1 && g_de->l1_down[1])
+        ? (uint8_t *)g_de->l1_down[1]->data : nullptr;
+    uint8_t * l1_gu = g_de->l1_gate_up ? (uint8_t *)g_de->l1_gate_up->data : nullptr;
 
     dyn_ex_slot_assign_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
         (const int32_t *)src->data, (int32_t *)slot_ids->data,
         l2.d_expert_to_slot,
         l2.d_gate_data, l2.d_up_data, l2.d_down_data, l2.d_gate_up_data,
-        l1_g, l1_u, l1_d, l1_gu,
+        l1_g, l1_u, l1_da, l1_db, l1_gu,
         g_de->l1_stride_gate, g_de->l1_stride_up,
-        g_de->l1_stride_down, g_de->l1_stride_gate_up,
+        g_de->l1_stride_down_arr[0],
+        (g_de->n_down_families > 1) ? g_de->l1_stride_down_arr[1] : 0,
+        g_de->l1_stride_gate_up,
         l2.gate_size, l2.up_size, l2.down_size, l2.gate_up_size,
         g_de->d_l1_expert_to_slot,
+        g_de->d_l1_slot_to_expert,
         (struct gpu_miss_entry *)g_de->d_miss_buf, g_de->d_miss_count,
         g_de->d_sync_flag,
         g_de->d_free_stack, g_de->d_stack_ptr,
         g_de->d_claimed_group,
+        g_de->d_group_ok, g_de->d_group_base,
         n_eu, n_t, g_de->n_groups, g_de->n_experts, il);
 
     cudaError_t launch_err = cudaGetLastError();
@@ -255,7 +317,9 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     *(volatile int *)g_de->h_miss_count = 0;
     *(volatile int *)g_de->h_sync_flag = 0;
 
-    cudaDeviceSynchronize();
+    if (!g_de->sync_event) cudaEventCreate((cudaEvent_t *)&g_de->sync_event);
+    cudaEventRecord((cudaEvent_t)g_de->sync_event, (cudaStream_t)stream);
+    cudaEventSynchronize((cudaEvent_t)g_de->sync_event);
 
     std::vector<int> ids(n_eu);
     cudaMemcpy(ids.data(), src->data, n_eu * sizeof(int), cudaMemcpyDeviceToHost);
@@ -288,13 +352,19 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
                     if (g_de->pi_up >= 0 && g_de->l1_up && l2n.up_data && l2n.up_size > 0)
                         cudaMemcpy((char *)g_de->l1_up->data + (size_t)p_slot * g_de->l1_stride_up,
                             l2n.up_data + (size_t)ls * l2n.up_size, g_de->l1_stride_up, cudaMemcpyHostToDevice);
-                    if (g_de->pi_down >= 0 && g_de->l1_down_q4 && l2n.down_data && l2n.down_size > 0)
-                        cudaMemcpy((char *)g_de->l1_down_q4->data + (size_t)p_slot * g_de->l1_stride_down,
-                            l2n.down_data + (size_t)ls * l2n.down_size, g_de->l1_stride_down, cudaMemcpyHostToDevice);
+                    if (g_de->pi_down >= 0 && l2n.down_data && l2n.down_size > 0) {
+                        int fam = (l2n.down_family < g_de->n_down_families) ? l2n.down_family : 0;
+                        ggml_tensor * l1_dn = g_de->l1_down[fam];
+                        size_t str_dn = g_de->l1_stride_down_arr[fam];
+                        if (l1_dn && str_dn > 0)
+                            cudaMemcpy((char *)l1_dn->data + (size_t)p_slot * str_dn,
+                                l2n.down_data + (size_t)ls * l2n.down_size, str_dn, cudaMemcpyHostToDevice);
+                    }
                     if (g_de->pi_gate_up >= 0 && g_de->l1_gate_up && l2n.gate_up_data && l2n.gate_up_size > 0)
                         cudaMemcpy((char *)g_de->l1_gate_up->data + (size_t)p_slot * g_de->l1_stride_gate_up,
                             l2n.gate_up_data + (size_t)ls * l2n.gate_up_size, g_de->l1_stride_gate_up, cudaMemcpyHostToDevice);
                     g_de->h_l1_expert_to_slot[eid] = p_slot;
+                    g_de->h_l1_slot_to_expert[p_slot] = eid;
                     p_slot++;
                 }
             }

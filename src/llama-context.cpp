@@ -171,6 +171,13 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     de->cur_group = g;
     int base_slot = de->groups[g].base_slot;
 
+    // evict stale L1 entries in the claimed slot range
+    int slot_end = base_slot + n_expert_used;
+    if (slot_end > de->n_l1) slot_end = de->n_l1;
+    for (int s = base_slot; s < slot_end; s++) {
+        de->l1_expert[s] = DYN_EX_SENTINEL;
+    }
+
     for (int i = 0; i < n_e && i < de->n_l1; i++) {
         int eid = (int)ids[i];
         if (eid < 0 || eid >= reader->n_experts) continue;
@@ -191,6 +198,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
         copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
         copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+
+        de->l1_expert[l1_slot] = eid;
+        de->l1_layer[l1_slot]  = il;
     }
 
     ggml_tensor * dst = t->src[1];

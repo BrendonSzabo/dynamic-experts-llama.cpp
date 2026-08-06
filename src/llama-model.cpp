@@ -1124,42 +1124,60 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
 
         // find template tensors — one per quant type per family
         ggml_tensor * gate_tmpl = nullptr, * up_tmpl = nullptr, * gate_up_tmpl = nullptr;
-        ggml_tensor * down_q4_tmpl = nullptr, * down_q6_tmpl = nullptr;
+        std::vector<std::pair<enum ggml_type, ggml_tensor *>> down_tmpls;
         for (auto & L : layers) {
             if (!gate_tmpl && L.ffn_gate_exps) gate_tmpl = L.ffn_gate_exps;
             if (!up_tmpl && L.ffn_up_exps) up_tmpl = L.ffn_up_exps;
             if (!gate_up_tmpl && L.ffn_gate_up_exps) gate_up_tmpl = L.ffn_gate_up_exps;
             if (L.ffn_down_exps) {
-                if (L.ffn_down_exps->type == GGML_TYPE_Q6_K && !down_q6_tmpl) down_q6_tmpl = L.ffn_down_exps;
-                if (L.ffn_down_exps->type == GGML_TYPE_Q4_K && !down_q4_tmpl) down_q4_tmpl = L.ffn_down_exps;
+                enum ggml_type dt = L.ffn_down_exps->type;
+                bool seen = false;
+                for (auto & p : down_tmpls) { if (p.first == dt) { seen = true; break; } }
+                if (!seen) down_tmpls.push_back({dt, L.ffn_down_exps});
             }
         }
 
-        auto * l1_gate      = make_l1(gate_tmpl, "dyn-ex-l1-gate");
-        auto * l1_up        = make_l1(up_tmpl, "dyn-ex-l1-up");
-        auto * l1_gate_up   = make_l1(gate_up_tmpl, "dyn-ex-l1-gate_up");
-        auto * l1_down_q4   = make_l1(down_q4_tmpl, "dyn-ex-l1-down-q4");
-        auto * l1_down_q6   = make_l1(down_q6_tmpl, "dyn-ex-l1-down-q6");
+        auto * l1_gate    = make_l1(gate_tmpl, "dyn-ex-l1-gate");
+        auto * l1_up      = make_l1(up_tmpl, "dyn-ex-l1-up");
+        auto * l1_gate_up = make_l1(gate_up_tmpl, "dyn-ex-l1-gate_up");
+
+        int nd = 0;
+        for (auto & p : down_tmpls) {
+            if (nd >= dyn_ex_cache::MAX_DOWN_FAMILIES) break;
+            char name[64]; snprintf(name, sizeof(name), "dyn-ex-l1-down-%d", nd);
+            pimpl->dyn_ex->l1_down[nd]             = make_l1(p.second, name);
+            pimpl->dyn_ex->l1_stride_down_arr[nd] = max_stride(pimpl->dyn_ex->l1_down[nd]);
+            nd++;
+        }
+        pimpl->dyn_ex->n_down_families = nd;
 
         pimpl->dyn_ex->l1_gate    = l1_gate;
         pimpl->dyn_ex->l1_up      = l1_up;
         pimpl->dyn_ex->l1_gate_up = l1_gate_up;
-        pimpl->dyn_ex->l1_down_q4 = l1_down_q4;
-        pimpl->dyn_ex->l1_down_q6 = l1_down_q6;
 
         pimpl->dyn_ex->l1_stride_gate    = max_stride(l1_gate);
         pimpl->dyn_ex->l1_stride_up      = max_stride(l1_up);
         pimpl->dyn_ex->l1_stride_gate_up = max_stride(l1_gate_up);
-        pimpl->dyn_ex->l1_stride_down    = std::max(
-            l1_down_q4 ? max_stride(l1_down_q4) : 0,
-            l1_down_q6 ? max_stride(l1_down_q6) : 0);
+        pimpl->dyn_ex->l1_stride_down    = 0;
+        for (int d = 0; d < nd; d++)
+            pimpl->dyn_ex->l1_stride_down = std::max(
+                pimpl->dyn_ex->l1_stride_down,
+                pimpl->dyn_ex->l1_stride_down_arr[d]);
 
         for (int il = 0; il < (int)layers.size(); il++) {
             auto & L = layers[il];
             L.ffn_gate_exps    = l1_gate;
             L.ffn_up_exps      = l1_up;
             L.ffn_gate_up_exps = l1_gate_up;
-            L.ffn_down_exps    = (L.ffn_down_exps && L.ffn_down_exps->type == GGML_TYPE_Q6_K) ? l1_down_q6 : l1_down_q4;
+            int fam = 0;
+            if (L.ffn_down_exps) {
+                for (int d = 0; d < nd; d++) {
+                    if (down_tmpls[d].first == L.ffn_down_exps->type) { fam = d; break; }
+                }
+            }
+            L.ffn_down_exps = pimpl->dyn_ex->l1_down[fam];
+            if (il < (int)pimpl->dyn_ex->l2.size())
+                pimpl->dyn_ex->l2[il].down_family = fam;
         }
 
         int n_expert_used = (int)hparams.n_expert_used;
@@ -1178,11 +1196,19 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             int n_groups = de.n_groups;
             int n_layers_val = (int)layers.size();
 
+            auto cuda_ok = [&](cudaError_t err, const char * what) -> bool {
+                if (err != cudaSuccess) {
+                    LLAMA_LOG_ERROR("dyn-ex: %s failed: %s\n", what, cudaGetErrorString(err));
+                    return false;
+                }
+                return true;
+            };
+
             {
                 std::vector<int> init_stack(n_groups);
                 for (int g = 0; g < n_groups; g++) init_stack[g] = g;
-                cudaMalloc(&de.d_free_stack, n_groups * sizeof(int));
-                cudaMalloc(&de.d_stack_ptr, sizeof(int));
+                if (!cuda_ok(cudaMalloc(&de.d_free_stack, n_groups * sizeof(int)), "cudaMalloc d_free_stack")) return false;
+                if (!cuda_ok(cudaMalloc(&de.d_stack_ptr, sizeof(int)), "cudaMalloc d_stack_ptr")) return false;
                 cudaMemcpy(de.d_free_stack, init_stack.data(), n_groups * sizeof(int), cudaMemcpyHostToDevice);
                 int depth = n_groups;
                 cudaMemcpy(de.d_stack_ptr, &depth, sizeof(int), cudaMemcpyHostToDevice);
@@ -1190,27 +1216,34 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
 
             {
                 size_t miss_buf_bytes = de.MISS_BUF_SIZE * sizeof(dyn_ex_cache::miss_entry);
-                cudaHostAlloc((void **)&de.h_miss_buf, miss_buf_bytes, cudaHostAllocMapped);
-                cudaHostGetDevicePointer((void **)&de.d_miss_buf, de.h_miss_buf, 0);
-                cudaHostAlloc((void **)&de.h_miss_count, sizeof(int), cudaHostAllocMapped);
-                cudaHostGetDevicePointer((void **)&de.d_miss_count, de.h_miss_count, 0);
+                if (!cuda_ok(cudaHostAlloc((void **)&de.h_miss_buf, miss_buf_bytes, cudaHostAllocMapped), "cudaHostAlloc h_miss_buf")) return false;
+                if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_miss_buf, de.h_miss_buf, 0), "cudaHostGetDevicePointer d_miss_buf")) return false;
+                if (!cuda_ok(cudaHostAlloc((void **)&de.h_miss_count, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_miss_count")) return false;
+                if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_miss_count, de.h_miss_count, 0), "cudaHostGetDevicePointer d_miss_count")) return false;
                 *de.h_miss_count = 0;
 
-            cudaHostAlloc((void **)&de.h_claimed_group, sizeof(int), cudaHostAllocMapped);
-            cudaHostGetDevicePointer((void **)&de.d_claimed_group, (void *)de.h_claimed_group, 0);
+            if (!cuda_ok(cudaHostAlloc((void **)&de.h_claimed_group, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_claimed_group")) return false;
+            if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_claimed_group, (void *)de.h_claimed_group, 0), "cudaHostGetDevicePointer d_claimed_group")) return false;
 
-            cudaHostAlloc((void **)&de.h_sync_flag, sizeof(int), cudaHostAllocMapped);
-            cudaHostGetDevicePointer((void **)&de.d_sync_flag, (void *)de.h_sync_flag, 0);
+            if (!cuda_ok(cudaHostAlloc((void **)&de.h_group_ok, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_group_ok")) return false;
+            if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_group_ok, (void *)de.h_group_ok, 0), "cudaHostGetDevicePointer d_group_ok")) return false;
+            *de.h_group_ok = -1;
+
+            if (!cuda_ok(cudaHostAlloc((void **)&de.h_group_base, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_group_base")) return false;
+            if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_group_base, (void *)de.h_group_base, 0), "cudaHostGetDevicePointer d_group_base")) return false;
+
+            if (!cuda_ok(cudaHostAlloc((void **)&de.h_sync_flag, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_sync_flag")) return false;
+            if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_sync_flag, (void *)de.h_sync_flag, 0), "cudaHostGetDevicePointer d_sync_flag")) return false;
 
             {
                 size_t l1ets_bytes = de.reader->n_experts * sizeof(int);
-                cudaHostAlloc((void **)&de.h_l1_expert_to_slot, l1ets_bytes, cudaHostAllocMapped);
-                cudaHostGetDevicePointer((void **)&de.d_l1_expert_to_slot, de.h_l1_expert_to_slot, 0);
+                if (!cuda_ok(cudaHostAlloc((void **)&de.h_l1_expert_to_slot, l1ets_bytes, cudaHostAllocMapped), "cudaHostAlloc h_l1_expert_to_slot")) return false;
+                if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_l1_expert_to_slot, de.h_l1_expert_to_slot, 0), "cudaHostGetDevicePointer d_l1_expert_to_slot")) return false;
                 std::fill_n((int *)de.h_l1_expert_to_slot, de.reader->n_experts, DYN_EX_SENTINEL);
 
                 size_t l1ste_bytes = n_l1 * sizeof(int);
-                cudaHostAlloc((void **)&de.h_l1_slot_to_expert, l1ste_bytes, cudaHostAllocMapped);
-                cudaHostGetDevicePointer((void **)&de.d_l1_slot_to_expert, de.h_l1_slot_to_expert, 0);
+                if (!cuda_ok(cudaHostAlloc((void **)&de.h_l1_slot_to_expert, l1ste_bytes, cudaHostAllocMapped), "cudaHostAlloc h_l1_slot_to_expert")) return false;
+                if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_l1_slot_to_expert, de.h_l1_slot_to_expert, 0), "cudaHostGetDevicePointer d_l1_slot_to_expert")) return false;
                 std::fill_n((int *)de.h_l1_slot_to_expert, n_l1, DYN_EX_SENTINEL);
             }
 
@@ -1219,8 +1252,8 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 de.freq[il].resize(de.reader->n_experts, 0);
 
             cudaStreamCreate((cudaStream_t *)&de.prefetch_stream);
-            cudaHostAlloc((void **)&de.h_misses_posted, sizeof(int), cudaHostAllocMapped);
-            cudaHostGetDevicePointer((void **)&de.d_misses_posted, (void *)de.h_misses_posted, 0);
+            if (!cuda_ok(cudaHostAlloc((void **)&de.h_misses_posted, sizeof(int), cudaHostAllocMapped), "cudaHostAlloc h_misses_posted")) return false;
+            if (!cuda_ok(cudaHostGetDevicePointer((void **)&de.d_misses_posted, (void *)de.h_misses_posted, 0), "cudaHostGetDevicePointer d_misses_posted")) return false;
             *de.h_sync_flag = 0;
             *de.h_misses_posted = 0;
             }
@@ -1231,27 +1264,39 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
 
                 int n_experts = de.reader->n_experts;
                 size_t ets_bytes = n_experts * sizeof(int);
-                cudaHostAlloc((void **)&l2.expert_to_slot, ets_bytes, cudaHostAllocMapped);
-                cudaHostGetDevicePointer((void **)&l2.d_expert_to_slot, l2.expert_to_slot, 0);
-                std::fill_n((int *)l2.expert_to_slot, n_experts, DYN_EX_SENTINEL);
+                {
+                    cudaError_t e = cudaHostAlloc((void **)&l2.expert_to_slot, ets_bytes, cudaHostAllocMapped);
+                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_expert_to_slot, l2.expert_to_slot, 0);
+                    if (e != cudaSuccess)
+                        LLAMA_LOG_ERROR("dyn-ex: layer %d expert_to_slot failed: %s\n", il, cudaGetErrorString(e));
+                }
+                if (l2.expert_to_slot) std::fill_n((int *)l2.expert_to_slot, n_experts, DYN_EX_SENTINEL);
                 l2.slot_to_expert.assign(l2.n_l2, DYN_EX_SENTINEL);
                 l2.age.resize(l2.n_l2);
 
                 if (l2.gate_size > 0) {
-                    cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocMapped);
-                    cudaHostGetDevicePointer((void **)&l2.d_gate_data, l2.gate_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocMapped);
+                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_gate_data, l2.gate_data, 0);
+                    if (e != cudaSuccess)
+                        LLAMA_LOG_ERROR("dyn-ex: layer %d gate_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.up_size > 0) {
-                    cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocMapped);
-                    cudaHostGetDevicePointer((void **)&l2.d_up_data, l2.up_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocMapped);
+                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_up_data, l2.up_data, 0);
+                    if (e != cudaSuccess)
+                        LLAMA_LOG_ERROR("dyn-ex: layer %d up_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.down_size > 0) {
-                    cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocMapped);
-                    cudaHostGetDevicePointer((void **)&l2.d_down_data, l2.down_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocMapped);
+                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_down_data, l2.down_data, 0);
+                    if (e != cudaSuccess)
+                        LLAMA_LOG_ERROR("dyn-ex: layer %d down_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 if (l2.gate_up_size > 0) {
-                    cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocMapped);
-                    cudaHostGetDevicePointer((void **)&l2.d_gate_up_data, l2.gate_up_data, 0);
+                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocMapped);
+                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_gate_up_data, l2.gate_up_data, 0);
+                    if (e != cudaSuccess)
+                        LLAMA_LOG_ERROR("dyn-ex: layer %d gate_up_data failed: %s\n", il, cudaGetErrorString(e));
                 }
                 l2.allocated = true;
 

@@ -316,7 +316,7 @@ void dyn_ex_cache_set_layer_size(
     l2.down_row     = down_row;
     l2.gate_up_size = gate_up_size;
     l2.gate_up_row  = gate_up_row;
-    l2.n_l2 = cache->n_l2;
+    l2.n_l2         = cache->n_l2;
 }
 
 void dyn_ex_cache_free(dyn_ex_cache * cache) {
@@ -331,6 +331,10 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
     if (cache->h_miss_count) cudaFreeHost(cache->h_miss_count);
     if (cache->h_sync_flag) cudaFreeHost(cache->h_sync_flag);
     if (cache->h_misses_posted) cudaFreeHost(cache->h_misses_posted);
+    if (cache->h_claimed_group) cudaFreeHost(cache->h_claimed_group);
+    if (cache->h_group_ok) cudaFreeHost(cache->h_group_ok);
+    if (cache->h_group_base) cudaFreeHost(cache->h_group_base);
+    if (cache->sync_event)  cudaEventDestroy((cudaEvent_t)cache->sync_event);
     for (auto & l2 : cache->l2) {
         if (!l2.allocated) continue;
         if (l2.expert_to_slot) cudaFreeHost(l2.expert_to_slot);

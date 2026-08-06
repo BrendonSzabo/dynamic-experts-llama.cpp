@@ -72,15 +72,19 @@ struct dyn_ex_cache {
     // L1: global GPU tensors (all layers share these)
     struct ggml_tensor * l1_gate    = nullptr;
     struct ggml_tensor * l1_up      = nullptr;
-    struct ggml_tensor * l1_down_q4 = nullptr;
-    struct ggml_tensor * l1_down_q6 = nullptr;
     struct ggml_tensor * l1_gate_up = nullptr;
 
+    // down tensors: one per quant type present in the model
+    static constexpr int MAX_DOWN_FAMILIES = 4;
+    ggml_tensor * l1_down[MAX_DOWN_FAMILIES] = {};
+    size_t l1_stride_down_arr[MAX_DOWN_FAMILIES] = {};
+    int    n_down_families = 0;
+
     // per-slot stride for L1 (max across layers, with zero-padding for smaller)
-    size_t l1_stride_gate    = 0;
-    size_t l1_stride_up      = 0;
-    size_t l1_stride_down    = 0;
-    size_t l1_stride_gate_up = 0;
+    size_t l1_stride_gate      = 0;
+    size_t l1_stride_up        = 0;
+    size_t l1_stride_down      = 0; // max stride across all down families
+    size_t l1_stride_gate_up   = 0;
 
     // L1 slot tracking [n_l1]
     std::vector<int32_t> l1_layer;   // which layer, -1 = empty
@@ -132,6 +136,9 @@ struct dyn_ex_cache {
         size_t   down_size   = 0;
         size_t   gate_up_size = 0;
         bool     allocated = false;
+
+        // which L1 down family this layer uses: 0 = q4, 1 = q6
+        int      down_family = 0;
     };
     std::vector<l2_layer> l2;
 
@@ -154,7 +161,7 @@ struct dyn_ex_cache {
 
     // miss buffer (pinned, device-visible)
     static constexpr int MISS_BUF_SIZE = 512;
-    struct miss_entry { int layer; int expert_id; };
+    struct miss_entry { int layer; int expert_id; int target_l1_slot; };
     miss_entry * h_miss_buf = nullptr;
     miss_entry * d_miss_buf = nullptr;
     int * h_miss_count = nullptr;
@@ -162,6 +169,12 @@ struct dyn_ex_cache {
 
     int * h_claimed_group = nullptr;
     int * d_claimed_group = nullptr;
+
+    // multi-block kernel sync (pinned, device-visible)
+    int * h_group_ok   = nullptr;
+    int * d_group_ok   = nullptr;
+    int * h_group_base = nullptr;
+    int * d_group_base = nullptr;
 
     std::vector<ggml_context_ptr>       l1_ctxs;
     std::vector<ggml_backend_buffer_ptr> l1_bufs;
@@ -181,34 +194,8 @@ struct dyn_ex_cache {
     int * h_misses_posted = nullptr;
     int * d_misses_posted = nullptr;
 
-    // kernel
-    void launch_slot_assign(
-        const int32_t * d_selected_experts,
-        int32_t * d_slot_ids,
-        const int * d_l2_expert_to_slot,
-        const uint8_t * d_l2_gate_data,
-        const uint8_t * d_l2_up_data,
-        const uint8_t * d_l2_down_data,
-        const uint8_t * d_l2_gate_up_data,
-        uint8_t * d_l1_gate,
-        uint8_t * d_l1_up,
-        uint8_t * d_l1_down,
-        uint8_t * d_l1_gate_up,
-        size_t l1_stride_gate,
-        size_t l1_stride_up,
-        size_t l1_stride_down,
-        size_t l1_stride_gate_up,
-        size_t l2_gate_row,
-        size_t l2_up_row,
-        size_t l2_down_row,
-        size_t l2_gate_up_row,
-        int n_expert_used,
-        int n_tokens,
-        int n_groups,
-        int base_slot,
-        int n_experts,
-        int layer,
-        void * stream);
+    // stream event for host sync without full device stall
+    void * sync_event = nullptr;
 
     static void release_group(int * d_stack, int * d_stack_ptr, int group_idx, void * stream);
 #endif
