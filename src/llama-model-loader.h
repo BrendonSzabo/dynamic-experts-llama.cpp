@@ -67,6 +67,7 @@ struct llama_model_loader {
     static const int TENSOR_DUPLICATED      = 1 << 1;
     static const int TENSOR_SKIP            = 1 << 2;
     static const int TENSOR_SKIP_IF_VIRTUAL = 1 << 3;
+    static const int TENSOR_DATA_SKIP       = 1 << 4; // create tensor metadata, skip data load
 
     int  dyn_ex_n_slots       = 0;      // dyn-ex: virtualize expert dim to n_slots
 

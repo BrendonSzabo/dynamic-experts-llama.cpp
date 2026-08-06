@@ -1422,6 +1422,9 @@ void llama_model_loader::get_mapping_range(size_t * first, size_t * last, void *
 }
 
 void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
+    // dyn-ex: expert tensors come from .bin, skip GGUF data
+    if (dyn_ex_n_slots > 0 && cur->op == GGML_OP_MUL_MAT_ID) return;
+
     const auto & w = require_weight(ggml_get_name(cur));
 
     if (use_mmap) {
