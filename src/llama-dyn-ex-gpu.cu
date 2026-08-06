@@ -81,9 +81,9 @@ __global__ void dyn_ex_slot_assign_kernel(
     }
     slot_ids[t * n_expert_used + e] = l1_slot;
 
-    if (tid == 0) printf("[dyn-ex] L%d launch: p=%p l2g=%p l2u=%p l2d=%p l2gu=%p sg=%zu su=%zu sd=%zu sgu=%zu\n",
-        layer, p, l2_gate, l2_up, l2_down, l2_gate_up,
-        l2_str_gate, l2_str_up, l2_str_down, l2_str_gate_up);
+    if (tid == 0) printf("[dyn-ex] L%d launch: p=%p l2g=%p l2u=%p l2d=%p l2gu=%p sg=%lu su=%lu sd=%lu sgu=%lu\n",
+        layer, p, (void*)l2_gate, (void*)l2_up, (void*)l2_down, (void*)l2_gate_up,
+        (unsigned long)l2_str_gate, (unsigned long)l2_str_up, (unsigned long)l2_str_down, (unsigned long)l2_str_gate_up);
 
     int l1_src = l1_expert_to_slot ? l1_expert_to_slot[expert_id] : -1;
     uint8_t * l1_dn   = p->l1_down[0] ? p->l1_down[0] : p->l1_down[1];
@@ -279,10 +279,10 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
             d_params_host.l1_str_down[d] = g_de->l1_stride_down_arr[d];
         d_params_host.n_down_families = g_de->n_down_families;
         cudaMemcpy(d_params_dev, &d_params_host, sizeof(gpu_dyn_ex_params), cudaMemcpyHostToDevice);
-        fprintf(stderr, "[dyn-ex] d_params: l1_g=%p sg=%zu l1_u=%p su=%zu l1_gu=%p sgu=%zu nd=%d\n",
-            (void*)d_params_host.l1_gate, d_params_host.l1_str_gate,
-            (void*)d_params_host.l1_up, d_params_host.l1_str_up,
-            (void*)d_params_host.l1_gate_up, d_params_host.l1_str_gate_up,
+        fprintf(stderr, "[dyn-ex] d_params: l1_g=%p sg=%lu l1_u=%p su=%lu l1_gu=%p sgu=%lu nd=%d\n",
+            (void*)d_params_host.l1_gate, (unsigned long)d_params_host.l1_str_gate,
+            (void*)d_params_host.l1_up, (unsigned long)d_params_host.l1_str_up,
+            (void*)d_params_host.l1_gate_up, (unsigned long)d_params_host.l1_str_gate_up,
             d_params_host.n_down_families);
     }
 
