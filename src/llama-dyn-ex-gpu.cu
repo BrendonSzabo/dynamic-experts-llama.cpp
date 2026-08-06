@@ -353,6 +353,7 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     if (launch_err != cudaSuccess) {
         fprintf(stderr, "[dyn-ex] layer %d: launch error: %s\n", il, cudaGetErrorString(launch_err));
     }
+    cudaDeviceSynchronize();
 }
 
 void dyn_ex_register_gpu_handler(dyn_ex_cache * de) {
