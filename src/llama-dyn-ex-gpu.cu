@@ -245,11 +245,6 @@ void dyn_ex_barrier_run(dyn_ex_cache * de, void * stream, ggml_tensor * dst) {
     int total = n_eu * n_t, block = 256, grid = (total + block - 1) / block;
     if (grid > 65535) grid = 1;
 
-    fprintf(stderr, "[dyn-ex] L%d str: g=%lu u=%lu d=%lu gu=%lu l2sg=%lu l2su=%lu l2sd=%lu\n",
-        il, (unsigned long)de->l1_stride_gate, (unsigned long)de->l1_stride_up,
-        (unsigned long)de->l1_stride_down, (unsigned long)de->l1_stride_gate_up,
-        (unsigned long)l2.gate_size, (unsigned long)l2.up_size, (unsigned long)l2.down_size);
-
     dyn_ex_slot_assign_kernel<<<grid, block, 0, (cudaStream_t)stream>>>(
         d_params_dev,
         (const int32_t *)src->data, (int32_t *)slot_ids->data,
