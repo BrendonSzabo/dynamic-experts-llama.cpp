@@ -2529,13 +2529,6 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
             continue;
         }
 
-        // DYN_EX_BARRIER: handler launches kernel dynamically with args from g_de
-        // (not tracked by node_properties src[] chain). capture would replay stale args.
-        if (node->op == GGML_OP_DYN_EX_BARRIER) {
-            use_cuda_graph = false;
-            break;
-        }
-
         // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
         if (node->op == GGML_OP_MUL_MAT_ID) {
             const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
@@ -2549,12 +2542,6 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
                 GGML_LOG_DEBUG("%s: disabling CUDA graphs due to unsupported node type\n", __func__);
 #endif
             }
-        }
-
-        if (node->op == GGML_OP_DYN_EX_BARRIER) {
-            // barrier handler launches kernels dynamically with runtime stride/size params;
-            // capturing would replay stale parameters against new tensor buffers
-            use_cuda_graph = false;
         }
 
         if (!use_cuda_graph) {

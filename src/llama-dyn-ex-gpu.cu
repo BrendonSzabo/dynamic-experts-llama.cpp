@@ -27,7 +27,6 @@ static __device__ void copy_family(
     size_t stride, size_t stride2) {
     GGML_UNUSED(stride2);
     if (!l1_dst || !l1_src || stride == 0) return;
-    if (stride > (1ULL << 30)) { printf("[dyn-ex] FATAL stride=%zu\n", stride); asm("trap;"); }
     const uint8_t * src = l1_src + (size_t)src_slot * stride;
     uint8_t * dst = l1_dst + (size_t)dst_slot * stride;
     for (size_t i = 0; i < stride; i++) dst[i] = src[i];
@@ -56,36 +55,59 @@ __global__ void dyn_ex_slot_assign_kernel(
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         int g = atomicSub(d_stack_ptr, 1) - 1;
         s_ok = (g >= 0 && g < n_groups);
-        if (s_ok) s_base = g * n_expert_used;
+        if (s_ok) {
+            s_base = g * n_expert_used;
+            *d_group_base = s_base;
+            int n_l1 = n_groups * n_expert_used;
+            int slot_end = s_base + n_expert_used;
+            if (l1_slot_to_expert) {
+                for (int s = s_base; s < slot_end; s++) {
+                    int eid = l1_slot_to_expert[s];
+                    if (eid == DYN_EX_SENTINEL) continue;
+                    if (l1_expert_to_slot) l1_expert_to_slot[eid] = DYN_EX_SENTINEL;
+                    l1_slot_to_expert[s] = DYN_EX_SENTINEL;
+                }
+            }
+        }
         *d_claimed_group = g;
         __threadfence();
         *d_group_ok = s_ok ? 1 : 0;
     }
+
     if (blockIdx.x > 0 || threadIdx.x > 0)
         while (*(volatile int *)d_group_ok == -1) {}
     __threadfence();
-    s_ok = (*d_group_ok == 1);
+
+    s_ok   = (*d_group_ok == 1);
     s_base = s_ok ? *d_group_base : 0;
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int total = n_expert_used * n_tokens;
     if (tid >= total) return;
+
     int e = tid % n_expert_used;
     int t = tid / n_expert_used;
-    if (!s_ok) { slot_ids[t * n_expert_used + e] = -1; return; }
+
+    if (!s_ok) {
+        slot_ids[t * n_expert_used + e] = -1;
+        return;
+    }
 
     int expert_id = selected_experts[t * n_expert_used + e];
     int l1_slot = s_base + e;
+
     if (expert_id < 0 || expert_id >= n_experts) {
-        slot_ids[t * n_expert_used + e] = -1; return;
+        slot_ids[t * n_expert_used + e] = -1;
+        return;
     }
+
     slot_ids[t * n_expert_used + e] = l1_slot;
 
-    if (tid == 0) printf("[dyn-ex] L%d launch: p=%p l2g=%p l2u=%p l2d=%p l2gu=%p sg=%lu su=%lu sd=%lu sgu=%lu\n",
-        layer, p, (void*)l2_gate, (void*)l2_up, (void*)l2_down, (void*)l2_gate_up,
-        (unsigned long)l2_str_gate, (unsigned long)l2_str_up, (unsigned long)l2_str_down, (unsigned long)l2_str_gate_up);
+    int n_l1 = n_groups * n_expert_used;
+    int l1_src = (l1_expert_to_slot && expert_id < n_experts)
+        ? l1_expert_to_slot[expert_id] : -1;
+    if (l1_src >= n_l1) l1_src = -1;
 
-    int l1_src = l1_expert_to_slot ? l1_expert_to_slot[expert_id] : -1;
     uint8_t * l1_dn   = p->l1_down[0] ? p->l1_down[0] : p->l1_down[1];
     size_t l1_str_dn = p->l1_down[0] ? p->l1_str_down[0] : p->l1_str_down[1];
 
@@ -96,12 +118,11 @@ __global__ void dyn_ex_slot_assign_kernel(
         copy_family(p->l1_gate_up, p->l1_gate_up, l1_src, l1_slot, p->l1_str_gate_up, 0);
         l1_expert_to_slot[expert_id] = l1_slot;
         if (l1_slot_to_expert) {
-            l1_slot_to_expert[l1_src]  = -1;
+            l1_slot_to_expert[l1_src]  = DYN_EX_SENTINEL;
             l1_slot_to_expert[l1_slot] = expert_id;
         }
     } else {
         int ls = expert_to_slot[expert_id];
-        printf("[dyn-ex] L%d t%d: eid=%d ls=%d slot=%d\n", layer, tid, expert_id, ls, l1_slot);
         if (ls >= 0) {
             copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
             copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
@@ -110,7 +131,6 @@ __global__ void dyn_ex_slot_assign_kernel(
             l1_expert_to_slot[expert_id] = l1_slot;
             if (l1_slot_to_expert) l1_slot_to_expert[l1_slot] = expert_id;
         } else {
-            printf("[dyn-ex] L%d t%d: MISS eid=%d\n", layer, tid, expert_id);
             int idx = atomicAdd(miss_count, 1);
             if (idx < dyn_ex_cache::MISS_BUF_SIZE) {
                 miss_buf[idx].layer          = layer;
@@ -129,7 +149,6 @@ __global__ void dyn_ex_slot_assign_kernel(
     __threadfence_system();
     if (*miss_count > 0) {
         int ls = *(volatile int *)&expert_to_slot[expert_id];
-        printf("[dyn-ex] L%d t%d RETRY: eid=%d ls=%d\n", layer, tid, expert_id, ls);
         if (ls >= 0) {
             copy_family(p->l1_gate,    l2_gate,       ls, l1_slot, p->l1_str_gate,    l2_str_gate);
             copy_family(p->l1_up,      l2_up,         ls, l1_slot, p->l1_str_up,      l2_str_up);
@@ -170,13 +189,6 @@ __global__ void dyn_ex_prefetch_kernel(
         copy_family(l1_down,    l2_down,    ls, prefetch_slot, l1_str_down,    l2_str_down);
         copy_family(l1_gate_up, l2_gate_up, ls, prefetch_slot, l1_str_gate_up, l2_str_gate_up);
         l1_expert_to_slot[expert_id] = prefetch_slot;
-    } else {
-        int idx = atomicAdd(miss_count, 1);
-        if (idx < dyn_ex_cache::MISS_BUF_SIZE) {
-            miss_buf[idx].layer          = layer;
-            miss_buf[idx].expert_id      = expert_id;
-            miss_buf[idx].target_l1_slot = prefetch_slot;
-        }
     }
 }
 
@@ -188,59 +200,6 @@ __global__ void dyn_ex_release_group_kernel(
     }
 }
 
-static void handle_misses(dyn_ex_cache * de, int n, int il) {
-    if (n > de->MISS_BUF_SIZE) n = de->MISS_BUF_SIZE;
-    auto & l2 = de->l2[il];
-    for (int i = 0; i < n; i++) {
-        int eid = de->h_miss_buf[i].expert_id;
-        if (eid < 0 || eid >= de->reader->n_experts) continue;
-        int victim = -1;
-        for (int s = 0; s < de->n_l2; s++)
-            if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
-        if (victim < 0) {
-            uint64_t old = UINT64_MAX;
-            for (int s = 0; s < de->n_l2; s++)
-                if (l2.age[s] < old) { old = l2.age[s]; victim = s; }
-            int ev = l2.slot_to_expert[victim];
-            if (ev >= 0) l2.expert_to_slot[ev] = DYN_EX_SENTINEL;
-        }
-        l2.slot_to_expert[victim] = eid;
-        l2.expert_to_slot[eid] = victim;
-        l2.age[victim] = de->clock;
-        auto & R = *de->reader;
-        if (de->pi_gate >= 0 && l2.gate_size > 0)
-            dyn_ex_read_param(&R, de->pi_gate, il, eid,
-                l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
-        if (de->pi_up >= 0 && l2.up_size > 0)
-            dyn_ex_read_param(&R, de->pi_up, il, eid,
-                l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
-        if (de->pi_down >= 0 && l2.down_size > 0)
-            dyn_ex_read_param(&R, de->pi_down, il, eid,
-                l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
-        if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
-            dyn_ex_read_param(&R, de->pi_gate_up, il, eid,
-                l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
-    }
-    *(volatile int *)de->h_miss_count = 0;
-    *(volatile int *)de->h_sync_flag = 0;
-}
-
-static void dyn_ex_watchdog_loop(dyn_ex_cache * de) {
-    while (!de->watchdog_stop.load(std::memory_order_relaxed)) {
-        if (*(volatile int *)de->h_sync_flag != 0) {
-            int layer = de->h_miss_buf[0].layer;
-            int n = *(volatile int *)de->h_miss_count;
-            handle_misses(de, n, layer);
-        }
-        std::this_thread::yield();
-    }
-}
-
-void dyn_ex_watchdog_start(dyn_ex_cache * de) {
-    if (!de || de->watchdog_thread.joinable()) return;
-    de->watchdog_stop.store(false, std::memory_order_relaxed);
-    de->watchdog_thread = std::thread(dyn_ex_watchdog_loop, de);
-}
 static dyn_ex_cache * g_de = nullptr;
 
 void dyn_ex_barrier_run(dyn_ex_cache * de, void * stream, ggml_tensor * dst) {
@@ -308,6 +267,7 @@ void dyn_ex_barrier_run(dyn_ex_cache * de, void * stream, ggml_tensor * dst) {
 static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     dyn_ex_barrier_run(g_de, stream, dst);
 }
+
 void dyn_ex_register_gpu_handler(dyn_ex_cache * de) {
     g_de = de;
     ggml_cuda_set_dyn_ex_barrier(dyn_ex_barrier_handler);
