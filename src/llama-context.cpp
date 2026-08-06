@@ -135,7 +135,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     // dedup: map expert_id → first slot assigned, so tokens sharing an expert reuse the slot
     std::vector<int> expert_slot(reader->n_experts, -1);
     int slots_used = 0;
-    int max_slots  = de->n_l1; // use all L1 slots for this batch
+    int max_slots  = de->n_l1 - base_slot; // use remaining L1 from this group start
     if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
 
     for (int i = 0; i < n_e && i < de->n_l1; i++) {
