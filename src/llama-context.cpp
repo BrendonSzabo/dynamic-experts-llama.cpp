@@ -132,38 +132,50 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     for (int s = base_slot; s < slot_end; s++)
         de->l1_expert[s] = DYN_EX_SENTINEL;
 
+    // dedup: map expert_id → first slot assigned, so tokens sharing an expert reuse the slot
+    std::vector<int> expert_slot(reader->n_experts, -1);
+    int slots_used = 0;
+    int max_slots  = de->n_expert_used * 2; // allow up to 2× the group for dedup
+    if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
+
     for (int i = 0; i < n_e && i < de->n_l1; i++) {
         int eid = (int)de->ids_buf[i];
-        if (eid < 0 || eid >= reader->n_experts) continue;
-        int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
-        int l1_slot = base_slot + i;
+        if (eid < 0 || eid >= reader->n_experts) { de->slots_buf[i] = -1; continue; }
 
-        auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
-            if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
-            size_t sz = tt->nb[2];
-            if (l2_slot >= 0 && l2_data) {
-                cudaMemcpyAsync((char *)tt->data + (size_t)l1_slot * sz,
-                    l2_data + (size_t)l2_slot * l2_row, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
-            } else {
-                dyn_ex_read_param(reader, pi, il, eid, de->cpu_buf.data(), sz);
-                cudaMemcpyAsync((char *)tt->data + (size_t)l1_slot * sz,
-                    de->cpu_buf.data(), sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
-            }
-        };
-        copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
-        copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
-        copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
-        copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+        int slot = expert_slot[eid];
+        if (slot < 0) {
+            if (slots_used >= max_slots) { de->slots_buf[i] = -1; continue; }
+            slot = base_slot + slots_used;
+            expert_slot[eid] = slot;
+            slots_used++;
 
-        de->l1_expert[l1_slot] = eid;
-        de->l1_layer[l1_slot]  = il;
+            int l2_slot = l2.allocated ? l2.expert_to_slot[eid] : DYN_EX_SENTINEL;
+
+            auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_row) {
+                if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
+                size_t sz = tt->nb[2];
+                if (l2_slot >= 0 && l2_data) {
+                    cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
+                        l2_data + (size_t)l2_slot * l2_row, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                } else {
+                    dyn_ex_read_param(reader, pi, il, eid, de->cpu_buf.data(), sz);
+                    cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
+                        de->cpu_buf.data(), sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                }
+            };
+            copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_row);
+            copy_one(layer.ffn_up_exps,     de->pi_up,      l2.up_data,      l2.up_row);
+            copy_one(layer.ffn_down_exps,   de->pi_down,    l2.down_data,    l2.down_row);
+            copy_one(layer.ffn_gate_up_exps, de->pi_gate_up, l2.gate_up_data, l2.gate_up_row);
+
+            de->l1_expert[slot] = eid;
+            de->l1_layer[slot]  = il;
+        }
+        de->slots_buf[i] = slot;
     }
 
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
-        if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
-        for (int i = 0; i < n_e; i++)
-            de->slots_buf[i] = (i < de->n_l1) ? base_slot + i : -1;
         cudaMemcpyAsync(dst->data, de->slots_buf.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
     }
 
