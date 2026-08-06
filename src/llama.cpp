@@ -375,7 +375,8 @@ static std::pair<int, llama_model *> llama_model_load(struct gguf_context * meta
                 return {-1, nullptr};
             }
 #ifdef GGML_USE_CUDA
-            dyn_ex_register_gpu_handler(model->dyn_ex_get_cache());
+            // handler disabled — barrier handled by eval callback
+    // dyn_ex_register_gpu_handler(model->dyn_ex_get_cache());
 #endif
         }
 
