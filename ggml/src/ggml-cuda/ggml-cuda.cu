@@ -2544,6 +2544,12 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
             }
         }
 
+        if (node->op == GGML_OP_DYN_EX_BARRIER) {
+            // barrier handler launches kernels dynamically with runtime stride/size params;
+            // capturing would replay stale parameters against new tensor buffers
+            use_cuda_graph = false;
+        }
+
         if (!use_cuda_graph) {
             break;
         }

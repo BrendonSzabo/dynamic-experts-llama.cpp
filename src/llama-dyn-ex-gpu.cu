@@ -86,6 +86,7 @@ __global__ void dyn_ex_slot_assign_kernel(
 
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int total = n_expert_used * n_tokens;
+    int n_l1  = n_groups * n_expert_used;
     if (tid >= total) return;
 
     int e = tid % n_expert_used;
@@ -106,8 +107,9 @@ __global__ void dyn_ex_slot_assign_kernel(
 
     slot_ids[t * n_expert_used + e] = l1_slot;
 
-    int l1_src = (l1_expert_to_slot && expert_id < n_experts)
+    int l1_src = (l1_expert_to_slot && n_l1 > 0 && expert_id < n_experts)
         ? l1_expert_to_slot[expert_id] : -1;
+    if (l1_src >= n_l1) l1_src = -1;
 
     // resolve which down tensor / stride to use for this layer
     uint8_t * l1_down; size_t l1_str_down;
@@ -311,8 +313,6 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     }
 
     g_de->clock++;
-    *g_de->h_miss_count = 0;
-    *(volatile int *)g_de->h_sync_flag = 0;
     *(volatile int *)g_de->h_group_ok = -1;
 
     int total = n_eu * n_t;
