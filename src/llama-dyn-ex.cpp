@@ -322,6 +322,8 @@ void dyn_ex_cache_set_layer_size(
 void dyn_ex_cache_free(dyn_ex_cache * cache) {
     if (!cache) return;
 #ifdef GGML_USE_CUDA
+    cache->watchdog_stop.store(true, std::memory_order_relaxed);
+    if (cache->watchdog_thread.joinable()) cache->watchdog_thread.join();
     for (auto * hp : cache->t_barrier_host) {
         if (hp) cudaFreeHost(hp);
     }

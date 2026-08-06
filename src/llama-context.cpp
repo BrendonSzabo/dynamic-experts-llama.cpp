@@ -98,46 +98,8 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (!de) return true;
 
 #ifdef GGML_USE_CUDA
-    // Handler registered via ggml_cuda_set_dyn_ex_barrier handles the GPU ops.
-    // Callback just handles pre-token L2 fill from previous misses.
-    {
-        int miss_count = *(volatile int *)de->h_miss_count;
-        if (miss_count > 0) {
-            auto & l2 = de->l2[il];
-            int n = miss_count > de->MISS_BUF_SIZE ? de->MISS_BUF_SIZE : miss_count;
-            for (int i = 0; i < n; i++) {
-                int eid = de->h_miss_buf[i].expert_id;
-                if (eid < 0 || eid >= de->reader->n_experts) continue;
-                int victim = -1;
-                for (int s = 0; s < de->n_l2; s++)
-                    if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
-                if (victim < 0) {
-                    uint64_t old = UINT64_MAX;
-                    for (int s = 0; s < de->n_l2; s++)
-                        if (l2.age[s] < old) { old = l2.age[s]; victim = s; }
-                    int ev = l2.slot_to_expert[victim];
-                    if (ev >= 0) l2.expert_to_slot[ev] = DYN_EX_SENTINEL;
-                }
-                l2.slot_to_expert[victim] = eid;
-                l2.expert_to_slot[eid] = victim;
-                l2.age[victim] = de->clock;
-                if (de->pi_gate >= 0 && l2.gate_size > 0)
-                    dyn_ex_read_param(de->reader, de->pi_gate, il, eid,
-                        l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
-                if (de->pi_up >= 0 && l2.up_size > 0)
-                    dyn_ex_read_param(de->reader, de->pi_up, il, eid,
-                        l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
-                if (de->pi_down >= 0 && l2.down_size > 0)
-                    dyn_ex_read_param(de->reader, de->pi_down, il, eid,
-                        l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
-                if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
-                    dyn_ex_read_param(de->reader, de->pi_gate_up, il, eid,
-                        l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
-            }
-            *(volatile int *)de->h_miss_count = 0;
-            *(volatile int *)de->h_sync_flag = 0;
-        }
-    }
+    // Miss handling is done by the background watchdog thread.
+    // The handler just launches the kernel and returns immediately.
     return true;
 #else
     if (role == 1) {

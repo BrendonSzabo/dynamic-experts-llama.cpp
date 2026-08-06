@@ -1319,6 +1319,7 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                             l2.gate_up_data + (size_t)s * l2.gate_up_size, l2.gate_up_size);
                 }
             }
+            dyn_ex_watchdog_start(&de);
         }
 #endif
     }

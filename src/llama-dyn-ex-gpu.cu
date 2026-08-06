@@ -215,6 +215,64 @@ __global__ void dyn_ex_release_group_kernel(
     }
 }
 
+static void handle_misses(dyn_ex_cache * de, int n, int il) {
+    if (n > de->MISS_BUF_SIZE) n = de->MISS_BUF_SIZE;
+    auto & l2 = de->l2[il];
+
+    for (int i = 0; i < n; i++) {
+        int eid = de->h_miss_buf[i].expert_id;
+        if (eid < 0 || eid >= de->reader->n_experts) continue;
+
+        int victim = -1;
+        for (int s = 0; s < de->n_l2; s++)
+            if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
+        if (victim < 0) {
+            uint64_t old = UINT64_MAX;
+            for (int s = 0; s < de->n_l2; s++)
+                if (l2.age[s] < old) { old = l2.age[s]; victim = s; }
+            int ev = l2.slot_to_expert[victim];
+            if (ev >= 0) l2.expert_to_slot[ev] = DYN_EX_SENTINEL;
+        }
+        l2.slot_to_expert[victim] = eid;
+        l2.expert_to_slot[eid] = victim;
+        l2.age[victim] = de->clock;
+
+        auto & R = *de->reader;
+        if (de->pi_gate >= 0 && l2.gate_size > 0)
+            dyn_ex_read_param(&R, de->pi_gate, il, eid,
+                l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
+        if (de->pi_up >= 0 && l2.up_size > 0)
+            dyn_ex_read_param(&R, de->pi_up, il, eid,
+                l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
+        if (de->pi_down >= 0 && l2.down_size > 0)
+            dyn_ex_read_param(&R, de->pi_down, il, eid,
+                l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
+        if (de->pi_gate_up >= 0 && l2.gate_up_size > 0)
+            dyn_ex_read_param(&R, de->pi_gate_up, il, eid,
+                l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
+    }
+    *(volatile int *)de->h_miss_count = 0;
+    *(volatile int *)de->h_sync_flag = 0;
+}
+
+static void dyn_ex_watchdog_loop(dyn_ex_cache * de) {
+    while (!de->watchdog_stop.load(std::memory_order_relaxed)) {
+        if (*(volatile int *)de->h_sync_flag != 0) {
+            int layer = de->h_miss_buf[0].layer;
+            int n = *(volatile int *)de->h_miss_count;
+            handle_misses(de, n, layer);
+        }
+        // brief yield to avoid burning CPU
+        std::this_thread::yield();
+    }
+}
+
+void dyn_ex_watchdog_start(dyn_ex_cache * de) {
+    if (!de || de->watchdog_thread.joinable()) return;
+    de->watchdog_stop.store(false, std::memory_order_relaxed);
+    de->watchdog_thread = std::thread(dyn_ex_watchdog_loop, de);
+}
+
 static dyn_ex_cache * g_de = nullptr;
 
 static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
@@ -239,6 +297,7 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     int n_eu = src->ne[0];
     int n_t  = src->ne[1];
 
+    g_de->clock++;
     *g_de->h_miss_count = 0;
     *(volatile int *)g_de->h_sync_flag = 0;
     *(volatile int *)g_de->h_group_ok = -1;
@@ -276,99 +335,6 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
     cudaError_t launch_err = cudaGetLastError();
     if (launch_err != cudaSuccess) {
         fprintf(stderr, "[dyn-ex] layer %d: launch error: %s\n", il, cudaGetErrorString(launch_err));
-    }
-
-    while (*(volatile int *)g_de->h_sync_flag == 0) {}
-
-    int n = *(volatile int *)g_de->h_miss_count;
-    if (n > g_de->MISS_BUF_SIZE) n = g_de->MISS_BUF_SIZE;
-    for (int i = 0; i < n; i++) {
-        int eid = g_de->h_miss_buf[i].expert_id;
-        if (eid < 0 || eid >= g_de->reader->n_experts) continue;
-
-        int victim = -1;
-        for (int s = 0; s < g_de->n_l2; s++)
-            if (l2.slot_to_expert[s] == DYN_EX_SENTINEL) { victim = s; break; }
-        if (victim < 0) {
-            uint64_t old = UINT64_MAX;
-            for (int s = 0; s < g_de->n_l2; s++)
-                if (l2.age[s] < old) { old = l2.age[s]; victim = s; }
-            int ev = l2.slot_to_expert[victim];
-            if (ev >= 0) l2.expert_to_slot[ev] = DYN_EX_SENTINEL;
-        }
-        l2.slot_to_expert[victim] = eid;
-        l2.expert_to_slot[eid] = victim;
-        l2.age[victim] = g_de->clock;
-
-        auto & R = *g_de->reader;
-        if (g_de->pi_gate >= 0 && l2.gate_size > 0)
-            dyn_ex_read_param(&R, g_de->pi_gate, il, eid,
-                l2.gate_data + (size_t)victim * l2.gate_size, l2.gate_size);
-        if (g_de->pi_up >= 0 && l2.up_size > 0)
-            dyn_ex_read_param(&R, g_de->pi_up, il, eid,
-                l2.up_data + (size_t)victim * l2.up_size, l2.up_size);
-        if (g_de->pi_down >= 0 && l2.down_size > 0)
-            dyn_ex_read_param(&R, g_de->pi_down, il, eid,
-                l2.down_data + (size_t)victim * l2.down_size, l2.down_size);
-        if (g_de->pi_gate_up >= 0 && l2.gate_up_size > 0)
-            dyn_ex_read_param(&R, g_de->pi_gate_up, il, eid,
-                l2.gate_up_data + (size_t)victim * l2.gate_up_size, l2.gate_up_size);
-    }
-    *(volatile int *)g_de->h_miss_count = 0;
-    *(volatile int *)g_de->h_sync_flag = 0;
-
-    if (!g_de->sync_event) cudaEventCreate((cudaEvent_t *)&g_de->sync_event);
-    cudaEventRecord((cudaEvent_t)g_de->sync_event, (cudaStream_t)stream);
-    cudaEventSynchronize((cudaEvent_t)g_de->sync_event);
-
-    std::vector<int> ids(n_eu);
-    cudaMemcpy(ids.data(), src->data, n_eu * sizeof(int), cudaMemcpyDeviceToHost);
-    if (il < (int)g_de->freq.size()) {
-        auto & f = g_de->freq[il];
-        for (int eid : ids) if (eid >= 0 && eid < (int)f.size()) f[eid]++;
-    }
-
-    int next_il = il + 1;
-    if (next_il < (int)g_de->freq.size() && !g_de->freq[next_il].empty()) {
-        int n_prefetch = g_de->n_l1 - n_eu;
-        if (n_prefetch > 0) {
-            std::vector<std::pair<int,int>> ranked;
-            auto & fn = g_de->freq[next_il];
-            for (int eid = 0; eid < (int)fn.size(); eid++)
-                if (fn[eid] > 0) ranked.push_back({fn[eid], eid});
-            std::sort(ranked.rbegin(), ranked.rend());
-            int p_slot = n_eu;
-            for (int k = 0; k < (int)ranked.size() && p_slot < g_de->n_l1; k++) {
-                int eid = ranked[k].second;
-                if (g_de->h_l1_expert_to_slot[eid] >= 0) continue;
-                auto & l2n = g_de->l2[next_il];
-                int ls = l2n.expert_to_slot[eid];
-                auto & R = *g_de->reader;
-                if (ls >= 0 && l2n.gate_data && l2n.gate_size > 0) {
-                    size_t sz = g_de->l1_stride_gate;
-                    if (sz > 0) cudaMemcpy(
-                        (char *)g_de->l1_gate->data + (size_t)p_slot * sz,
-                        l2n.gate_data + (size_t)ls * l2n.gate_size, sz, cudaMemcpyHostToDevice);
-                    if (g_de->pi_up >= 0 && g_de->l1_up && l2n.up_data && l2n.up_size > 0)
-                        cudaMemcpy((char *)g_de->l1_up->data + (size_t)p_slot * g_de->l1_stride_up,
-                            l2n.up_data + (size_t)ls * l2n.up_size, g_de->l1_stride_up, cudaMemcpyHostToDevice);
-                    if (g_de->pi_down >= 0 && l2n.down_data && l2n.down_size > 0) {
-                        int fam = (l2n.down_family < g_de->n_down_families) ? l2n.down_family : 0;
-                        ggml_tensor * l1_dn = g_de->l1_down[fam];
-                        size_t str_dn = g_de->l1_stride_down_arr[fam];
-                        if (l1_dn && str_dn > 0)
-                            cudaMemcpy((char *)l1_dn->data + (size_t)p_slot * str_dn,
-                                l2n.down_data + (size_t)ls * l2n.down_size, str_dn, cudaMemcpyHostToDevice);
-                    }
-                    if (g_de->pi_gate_up >= 0 && g_de->l1_gate_up && l2n.gate_up_data && l2n.gate_up_size > 0)
-                        cudaMemcpy((char *)g_de->l1_gate_up->data + (size_t)p_slot * g_de->l1_stride_gate_up,
-                            l2n.gate_up_data + (size_t)ls * l2n.gate_up_size, g_de->l1_stride_gate_up, cudaMemcpyHostToDevice);
-                    g_de->h_l1_expert_to_slot[eid] = p_slot;
-                    g_de->h_l1_slot_to_expert[p_slot] = eid;
-                    p_slot++;
-                }
-            }
-        }
     }
 }
 
