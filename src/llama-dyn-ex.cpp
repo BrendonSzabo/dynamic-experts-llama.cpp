@@ -278,7 +278,7 @@ dyn_ex_cache * dyn_ex_cache_init(
     cache->n_experts     = n_experts;
     cache->n_expert_used = n_expert_used;
 
-    cache->n_ubatch = std::max(1, (n_l1 / n_expert_used) / 2);
+    cache->n_ubatch = std::max(1, n_l1 / n_expert_used);
     cache->n_hot    = cache->n_ubatch * n_expert_used;
     cache->n_cache  = n_l1 - cache->n_hot;
 
