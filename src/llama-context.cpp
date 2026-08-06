@@ -15,6 +15,7 @@
 
 #include "capture.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cmath>
@@ -175,6 +176,51 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     }
 
     cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+
+    // track expert usage frequency for this layer
+    if (il < (int)de->freq.size()) {
+        auto & f = de->freq[il];
+        for (int i = 0; i < n_e; i++) {
+            int eid = de->ids_buf[i];
+            if (eid >= 0 && eid < (int)f.size()) f[eid]++;
+        }
+    }
+
+    // prefetch top experts for NEXT layer into remaining L1 slots
+    int next_il = il + 1;
+    if (next_il < (int)de->freq.size() && !de->freq[next_il].empty()) {
+        int cache_start = slots_used;  // first free slot after active experts
+        int cache_slots = de->n_l1 - cache_start;
+        if (cache_slots > 0) {
+            std::vector<std::pair<int,int>> ranked;
+            auto & fn = de->freq[next_il];
+            for (int eid = 0; eid < (int)fn.size(); eid++)
+                if (fn[eid] > 0) ranked.push_back({fn[eid], eid});
+            std::sort(ranked.rbegin(), ranked.rend());
+            auto & l2n = de->l2[next_il];
+            int p_slot = cache_start;
+            for (int k = 0; k < (int)ranked.size() && p_slot < de->n_l1; k++) {
+                int eid = ranked[k].second;
+                int ls = l2n.allocated ? l2n.expert_to_slot[eid] : DYN_EX_SENTINEL;
+                if (ls < 0) continue;
+                auto prefetch_one = [&](ggml_tensor * tt, uint8_t * l2d, size_t l2sz, size_t l2row) {
+                    if (!tt || !tt->data || !l2d || l2sz == 0) return;
+                    cudaMemcpyAsync((char *)tt->data + (size_t)p_slot * tt->nb[2],
+                        l2d + (size_t)ls * l2row, l2sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                };
+                prefetch_one(de->l1_gate,    l2n.gate_data,    l2n.gate_size,    l2n.gate_row);
+                prefetch_one(de->l1_up,      l2n.up_data,      l2n.up_size,      l2n.up_row);
+                prefetch_one(de->l1_down[0] ? de->l1_down[0] : de->l1_down[1],
+                             l2n.down_data, l2n.down_size, l2n.down_row);
+                if (de->l1_gate_up)
+                    prefetch_one(de->l1_gate_up, l2n.gate_up_data, l2n.gate_up_size, l2n.gate_up_row);
+                if (de->h_l1_expert_to_slot) de->h_l1_expert_to_slot[eid] = p_slot;
+                if (de->h_l1_slot_to_expert) de->h_l1_slot_to_expert[p_slot] = eid;
+                p_slot++;
+            }
+        }
+    }
+
     return false;
 #else
     if (role == 1) {
