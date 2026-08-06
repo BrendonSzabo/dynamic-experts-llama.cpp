@@ -1170,6 +1170,16 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
         }
     }
 
+    {
+        size_t max_param = 0;
+        for (int pi = 0; pi < pimpl->dyn_ex->reader->n_params; pi++) {
+            max_param = std::max(max_param, pimpl->dyn_ex->reader->param_size[pi]);
+        }
+        pimpl->dyn_ex->cpu_buf.resize(max_param > 0 ? max_param : 1);
+        pimpl->dyn_ex->ids_buf.resize(n_l1);
+        pimpl->dyn_ex->slots_buf.resize(n_l1);
+    }
+
     dyn_ex_cache_alloc_barriers(pimpl->dyn_ex, (int)hparams.n_layer(), (int)hparams.n_expert_used);
     return true;
 }

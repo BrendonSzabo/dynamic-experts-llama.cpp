@@ -103,7 +103,11 @@ struct dyn_ex_cache {
     int prev_group = -1;
     int cur_group  = -1;
 
-    std::deque<int> free_groups; // FIFO freelist — push_back (release), pop_front (claim), no lock needed
+    std::deque<int> free_groups; // FIFO freelist — push_back (release), pop_front (claim)
+
+    std::vector<uint8_t>  cpu_buf;
+    std::vector<int32_t>  ids_buf;
+    std::vector<int32_t>  slots_buf;
 
     std::function<void(int group_idx, int layer)> on_group_release;
 

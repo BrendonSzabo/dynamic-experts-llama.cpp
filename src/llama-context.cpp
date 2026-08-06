@@ -116,7 +116,8 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
 
-    std::vector<int32_t> ids(n_e);
+    if ((int)de->ids_buf.size() < n_e) de->ids_buf.resize(n_e);
+    auto & ids = de->ids_buf;
     ggml_backend_tensor_get(src, ids.data(), 0, n_e * sizeof(int32_t));
 
     auto & layer = model->layers[il];
@@ -124,12 +125,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     auto & l2    = de->l2[il];
     de->clock++;
 
-    size_t max_size = 0;
-    for (int pi = 0; pi < reader->n_params; pi++) {
-        if (reader->param_size[pi] > max_size) max_size = reader->param_size[pi];
-    }
-    if (max_size == 0) max_size = 1;
-    std::vector<uint8_t> cpu_buf(max_size);
+    auto & cpu_buf = de->cpu_buf;
 
     GGML_ASSERT(!de->free_groups.empty());
     int g = de->free_groups.front();
@@ -230,7 +226,8 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
-        std::vector<int32_t> slots(n_e);
+        if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
+        auto & slots = de->slots_buf;
         for (int i = 0; i < n_e; i++) slots[i] = (i < de->n_l1) ? base_slot + i : -1;
 #ifdef GGML_USE_CUDA
         cudaMemcpy(dst->data, slots.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
