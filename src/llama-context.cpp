@@ -99,10 +99,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
 #ifdef GGML_USE_CUDA
     if (role == 1) {
-        if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
-            de->free_groups.push_back(de->cur_group);
-            de->cur_group = -1;
-        }
+        // flat pool: release is a no-op, all slots reclaimed on next claim
         return false;
     }
 
@@ -121,21 +118,13 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     auto & l2    = de->l2[il];
     de->clock++;
 
-    GGML_ASSERT(!de->free_groups.empty());
-    int g = de->free_groups.front();
-    de->free_groups.pop_front();
-    de->cur_group = g;
-    int base_slot = de->groups[g].base_slot;
-
-    int slot_end = base_slot + de->n_expert_used;
-    if (slot_end > de->n_l1) slot_end = de->n_l1;
-    for (int s = base_slot; s < slot_end; s++)
+    // flat pool: use all L1 slots starting at 0, evict everything
+    for (int s = 0; s < de->n_l1; s++)
         de->l1_expert[s] = DYN_EX_SENTINEL;
 
-    // dedup: map expert_id → first slot assigned, so tokens sharing an expert reuse the slot
     std::vector<int> expert_slot(reader->n_experts, -1);
     int slots_used = 0;
-    int max_slots  = de->n_l1 - base_slot; // use remaining L1 from this group start
+    int max_slots  = de->n_l1;
     if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
 
     for (int i = 0; i < n_e && i < de->n_l1; i++) {
@@ -145,7 +134,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         int slot = expert_slot[eid];
         if (slot < 0) {
             if (slots_used >= max_slots) { de->slots_buf[i] = -1; continue; }
-            slot = base_slot + slots_used;
+            slot = slots_used;
             expert_slot[eid] = slot;
             slots_used++;
 
