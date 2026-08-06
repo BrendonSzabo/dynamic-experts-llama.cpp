@@ -101,7 +101,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     // Run barrier synchronously on prefetch stream, outside graph capture scope.
     // Return false so the scheduler skips dispatching to the CUDA backend.
     dyn_ex_barrier_run(de, de->prefetch_stream, t);
-    cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+    cudaError_t err = cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+    if (err != cudaSuccess)
+        fprintf(stderr, "[dyn-ex] L%d sync err: %s\n", il, cudaGetErrorString(err));
     return false;
 #else
     if (role == 1) {
