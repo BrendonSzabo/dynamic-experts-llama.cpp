@@ -101,6 +101,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         if (de->cur_group >= 0 && de->cur_group < de->n_groups) {
             de->group_state[de->cur_group].store(dyn_ex_cache::GROUP_FREE, std::memory_order_release);
             de->groups[de->cur_group].layer = -1;
+            de->free_groups.push_back(de->cur_group);
             if (de->on_group_release) {
                 de->on_group_release(de->cur_group, il);
             }
@@ -130,28 +131,9 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if (max_size == 0) max_size = 1;
     std::vector<uint8_t> cpu_buf(max_size);
 
-    int g = -1;
-    for (int i = 0; i < de->n_groups; i++) {
-        uint8_t expected = dyn_ex_cache::GROUP_FREE;
-        if (de->group_state[i].compare_exchange_strong(expected, dyn_ex_cache::GROUP_BUSY,
-                std::memory_order_acquire, std::memory_order_relaxed)) {
-            g = i;
-            break;
-        }
-    }
-    if (g < 0) {
-        uint64_t oldest_age = UINT64_MAX;
-        for (int i = 0; i < de->n_groups; i++) {
-            if (de->groups[i].age < oldest_age) {
-                oldest_age = de->groups[i].age;
-                g = i;
-            }
-        }
-        de->group_state[g].store(dyn_ex_cache::GROUP_BUSY, std::memory_order_release);
-        if (de->on_group_release) {
-            de->on_group_release(g, de->groups[g].layer);
-        }
-    }
+    GGML_ASSERT(!de->free_groups.empty());
+    int g = de->free_groups.front();
+    de->free_groups.pop_front();
     de->groups[g].layer = il;
     de->groups[g].age   = de->clock;
     de->cur_group = g;

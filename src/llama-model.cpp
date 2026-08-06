@@ -1166,6 +1166,7 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             pimpl->dyn_ex->groups[g].layer     = -1;
             pimpl->dyn_ex->groups[g].age       = 0;
             pimpl->dyn_ex->group_state[g].store(dyn_ex_cache::GROUP_FREE, std::memory_order_relaxed);
+            pimpl->dyn_ex->free_groups.push_back(g);
         }
     }
 
