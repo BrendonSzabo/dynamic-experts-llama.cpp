@@ -121,6 +121,10 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     // flat pool: use all L1 slots starting at 0, evict everything
     for (int s = 0; s < de->n_l1; s++)
         de->l1_expert[s] = DYN_EX_SENTINEL;
+    if (de->h_l1_expert_to_slot)
+        std::fill_n((int *)de->h_l1_expert_to_slot, reader->n_experts, DYN_EX_SENTINEL);
+    if (de->h_l1_slot_to_expert)
+        std::fill_n((int *)de->h_l1_slot_to_expert, de->n_l1, DYN_EX_SENTINEL);
 
     std::vector<int> expert_slot(reader->n_experts, -1);
     int slots_used = 0;
@@ -159,6 +163,8 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
             de->l1_expert[slot] = eid;
             de->l1_layer[slot]  = il;
+            if (de->h_l1_expert_to_slot) de->h_l1_expert_to_slot[eid] = slot;
+            if (de->h_l1_slot_to_expert) de->h_l1_slot_to_expert[slot] = eid;
         }
         de->slots_buf[i] = slot;
     }
