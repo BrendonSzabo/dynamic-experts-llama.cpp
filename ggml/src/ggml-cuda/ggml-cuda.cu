@@ -2529,6 +2529,13 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
             continue;
         }
 
+        // DYN_EX_BARRIER: handler launches kernel dynamically with args from g_de
+        // (not tracked by node_properties src[] chain). capture would replay stale args.
+        if (node->op == GGML_OP_DYN_EX_BARRIER) {
+            use_cuda_graph = false;
+            break;
+        }
+
         // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
         if (node->op == GGML_OP_MUL_MAT_ID) {
             const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
