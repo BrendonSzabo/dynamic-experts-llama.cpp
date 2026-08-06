@@ -1114,11 +1114,12 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             t->nb[2] = t->nb[1] * t->ne[1];
             t->nb[3] = t->nb[2] * t->ne[2];
             t->flags = GGML_TENSOR_FLAG_EXTERNAL;
-            size_t sz = ggml_nbytes(t);
-            ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, sz);
-            ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
-            ggml_set_name(t, name);
-            return t;
+                size_t sz = ggml_nbytes(t);
+                ggml_backend_buffer_t buf = ggml_backend_buft_alloc_buffer(buft, sz);
+                ggml_backend_tensor_alloc(buf, t, ggml_backend_buffer_get_base(buf));
+                ggml_set_name(t, name);
+                pimpl->dyn_ex->l1_bufs.push_back(ggml_backend_buffer_ptr(buf));
+                return t;
         };
 
         // find template tensors — one per quant type per family
@@ -1200,6 +1201,24 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
 
             cudaHostAlloc((void **)&de.h_sync_flag, sizeof(int), cudaHostAllocMapped);
             cudaHostGetDevicePointer((void **)&de.d_sync_flag, (void *)de.h_sync_flag, 0);
+
+            {
+                size_t l1ets_bytes = de.reader->n_experts * sizeof(int);
+                cudaHostAlloc((void **)&de.h_l1_expert_to_slot, l1ets_bytes, cudaHostAllocMapped);
+                cudaHostGetDevicePointer((void **)&de.d_l1_expert_to_slot, de.h_l1_expert_to_slot, 0);
+                std::fill_n((int *)de.h_l1_expert_to_slot, de.reader->n_experts, DYN_EX_SENTINEL);
+
+                size_t l1ste_bytes = n_l1 * sizeof(int);
+                cudaHostAlloc((void **)&de.h_l1_slot_to_expert, l1ste_bytes, cudaHostAllocMapped);
+                cudaHostGetDevicePointer((void **)&de.d_l1_slot_to_expert, de.h_l1_slot_to_expert, 0);
+                std::fill_n((int *)de.h_l1_slot_to_expert, n_l1, DYN_EX_SENTINEL);
+            }
+
+            de.freq.resize(n_layers_val);
+            for (int il = 0; il < n_layers_val; il++)
+                de.freq[il].resize(de.reader->n_experts, 0);
+
+            cudaStreamCreate((cudaStream_t *)&de.prefetch_stream);
             cudaHostAlloc((void **)&de.h_misses_posted, sizeof(int), cudaHostAllocMapped);
             cudaHostGetDevicePointer((void **)&de.d_misses_posted, (void *)de.h_misses_posted, 0);
             *de.h_sync_flag = 0;
@@ -1219,22 +1238,41 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 l2.age.resize(l2.n_l2);
 
                 if (l2.gate_size > 0) {
-                    cudaHostAlloc((void **)&l2.gate_data, l2.gate_size, cudaHostAllocMapped);
+                    cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocMapped);
                     cudaHostGetDevicePointer((void **)&l2.d_gate_data, l2.gate_data, 0);
                 }
                 if (l2.up_size > 0) {
-                    cudaHostAlloc((void **)&l2.up_data, l2.up_size, cudaHostAllocMapped);
+                    cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocMapped);
                     cudaHostGetDevicePointer((void **)&l2.d_up_data, l2.up_data, 0);
                 }
                 if (l2.down_size > 0) {
-                    cudaHostAlloc((void **)&l2.down_data, l2.down_size, cudaHostAllocMapped);
+                    cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocMapped);
                     cudaHostGetDevicePointer((void **)&l2.d_down_data, l2.down_data, 0);
                 }
                 if (l2.gate_up_size > 0) {
-                    cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size, cudaHostAllocMapped);
+                    cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocMapped);
                     cudaHostGetDevicePointer((void **)&l2.d_gate_up_data, l2.gate_up_data, 0);
                 }
                 l2.allocated = true;
+
+                int n_fill = std::min(n_l2, de.reader->n_experts);
+                for (int s = 0; s < n_fill; s++) {
+                    int eid = s;
+                    l2.expert_to_slot[eid] = s;
+                    l2.slot_to_expert[s] = eid;
+                    if (de.pi_gate >= 0 && l2.gate_data && l2.gate_size > 0)
+                        dyn_ex_read_param(de.reader, de.pi_gate, il, eid,
+                            l2.gate_data + (size_t)s * l2.gate_size, l2.gate_size);
+                    if (de.pi_up >= 0 && l2.up_data && l2.up_size > 0)
+                        dyn_ex_read_param(de.reader, de.pi_up, il, eid,
+                            l2.up_data + (size_t)s * l2.up_size, l2.up_size);
+                    if (de.pi_down >= 0 && l2.down_data && l2.down_size > 0)
+                        dyn_ex_read_param(de.reader, de.pi_down, il, eid,
+                            l2.down_data + (size_t)s * l2.down_size, l2.down_size);
+                    if (de.pi_gate_up >= 0 && l2.gate_up_data && l2.gate_up_size > 0)
+                        dyn_ex_read_param(de.reader, de.pi_gate_up, il, eid,
+                            l2.gate_up_data + (size_t)s * l2.gate_up_size, l2.gate_up_size);
+                }
             }
         }
 #endif

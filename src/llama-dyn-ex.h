@@ -163,6 +163,18 @@ struct dyn_ex_cache {
     int * h_claimed_group = nullptr;
     int * d_claimed_group = nullptr;
 
+    std::vector<ggml_context_ptr>       l1_ctxs;
+    std::vector<ggml_backend_buffer_ptr> l1_bufs;
+
+    int * h_l1_expert_to_slot = nullptr;
+    int * d_l1_expert_to_slot = nullptr;
+    int * h_l1_slot_to_expert = nullptr;
+    int * d_l1_slot_to_expert = nullptr;
+
+    std::vector<std::vector<int>> freq;
+
+    void * prefetch_stream = nullptr;
+
     // busy-wait sync flags (pinned, device-visible)
     int * h_sync_flag     = nullptr;
     int * d_sync_flag     = nullptr;
