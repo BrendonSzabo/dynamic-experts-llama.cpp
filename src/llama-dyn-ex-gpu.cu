@@ -82,8 +82,9 @@ __global__ void dyn_ex_slot_assign_kernel(
     }
     __syncthreads();
 
+    __threadfence_system();
     if (*miss_count > 0) {
-        int ls = expert_to_slot[expert_id];
+        int ls = *(volatile int *)&expert_to_slot[expert_id];
         if (ls >= 0) {
             copy_family(l1_gate,    l2_gate,    ls, l1_slot, l1_str_gate,    l2_row_gate);
             copy_family(l1_up,      l2_up,      ls, l1_slot, l1_str_up,      l2_row_up);
@@ -149,7 +150,7 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
         l1_g, l1_u, l1_d, l1_gu,
         g_de->l1_stride_gate, g_de->l1_stride_up,
         g_de->l1_stride_down, g_de->l1_stride_gate_up,
-        l2.gate_row, l2.up_row, l2.down_row, l2.gate_up_row,
+        l2.gate_size, l2.up_size, l2.down_size, l2.gate_up_size,
         (struct gpu_miss_entry *)g_de->d_miss_buf, g_de->d_miss_count,
         g_de->d_sync_flag,
         g_de->d_free_stack, g_de->d_stack_ptr,
@@ -188,16 +189,16 @@ static void dyn_ex_barrier_handler(void * stream, ggml_tensor * dst) {
         auto & R = *g_de->reader;
         if (g_de->pi_gate >= 0 && l2.gate_size > 0)
             dyn_ex_read_param(&R, g_de->pi_gate, il, eid,
-                l2.gate_data + (size_t)victim * l2.gate_row, l2.gate_size);
+                l2.gate_data + (size_t)victim * l2.gate_size, l2.gate_size);
         if (g_de->pi_up >= 0 && l2.up_size > 0)
             dyn_ex_read_param(&R, g_de->pi_up, il, eid,
-                l2.up_data + (size_t)victim * l2.up_row, l2.up_size);
+                l2.up_data + (size_t)victim * l2.up_size, l2.up_size);
         if (g_de->pi_down >= 0 && l2.down_size > 0)
             dyn_ex_read_param(&R, g_de->pi_down, il, eid,
-                l2.down_data + (size_t)victim * l2.down_row, l2.down_size);
+                l2.down_data + (size_t)victim * l2.down_size, l2.down_size);
         if (g_de->pi_gate_up >= 0 && l2.gate_up_size > 0)
             dyn_ex_read_param(&R, g_de->pi_gate_up, il, eid,
-                l2.gate_up_data + (size_t)victim * l2.gate_up_row, l2.gate_up_size);
+                l2.gate_up_data + (size_t)victim * l2.gate_up_size, l2.gate_up_size);
     }
     *(volatile int *)g_de->h_miss_count = 0;
     *(volatile int *)g_de->h_sync_flag = 0;
