@@ -177,6 +177,34 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
 
+    if (il == 0 && slots_used > 0) {
+        auto chk = [&](const char * fam, ggml_tensor * tt, int pi, int eid) {
+            if (!tt || !tt->data || pi < 0) return;
+            size_t sz = tt->nb[2];
+            int slot = expert_slot[eid];
+            if (slot < 0) return;
+            std::vector<uint8_t> buf(sz);
+            cudaMemcpy(buf.data(), (char *)tt->data + (size_t)slot * sz, sz, cudaMemcpyDeviceToHost);
+            uint64_t xsum = 0;
+            for (size_t j = 0; j < sz; j++) xsum ^= ((uint64_t)buf[j] << ((j & 7) * 8));
+            fprintf(stderr, "[dyn-ex] L0 %s e%d s%d sz=%zu xsum=%016lx\n", fam, eid, slot, sz, xsum);
+            // compare with .bin
+            std::vector<uint8_t> bin_buf(sz);
+            dyn_ex_read_param(reader, pi, il, eid, bin_buf.data(), sz);
+            uint64_t bxsum = 0;
+            for (size_t j = 0; j < sz; j++) bxsum ^= ((uint64_t)bin_buf[j] << ((j & 7) * 8));
+            fprintf(stderr, "[dyn-ex] L0 %s e%d    BIN sz=%zu xsum=%016lx %s\n", fam, eid, bin_buf.size(), bxsum,
+                xsum == bxsum ? "MATCH" : "MISMATCH");
+        };
+        for (int i = 0; i < n_e && i < 8; i++) {
+            int eid = de->ids_buf[i];
+            if (eid < 0) continue;
+            chk("gate", layer.ffn_gate_exps, de->pi_gate, eid);
+            chk("up",   layer.ffn_up_exps,   de->pi_up,   eid);
+            chk("down", layer.ffn_down_exps, de->pi_down, eid);
+        }
+    }
+
     // track expert usage frequency for this layer
     if (il < (int)de->freq.size()) {
         auto & f = de->freq[il];
