@@ -137,6 +137,8 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         if (eid < 0 || eid >= reader->n_experts) { de->slots_buf[i] = -1; continue; }
 
         int slot = expert_slot[eid];
+        if (il == 0 && i < 4) fprintf(stderr, "[dyn-ex] L%d i%d e%d slot=%d es=%d used=%d max=%d\n",
+            il, i, eid, slot, (int)expert_slot[eid], slots_used, max_slots);
         if (slot < 0) {
             if (slots_used >= max_slots) { de->slots_buf[i] = -1; continue; }
             slot = slots_used;
@@ -148,8 +150,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
             auto copy_one = [&](ggml_tensor * tt, int pi, uint8_t * l2_data, size_t l2_stride) {
                 if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
                 size_t sz = tt->nb[2];
-                if (il == 0 && slots_used <= 1) fprintf(stderr, "[dyn-ex] L%d s%d e%d ls%d sz=%lu l2s=%lu\n",
-                    il, slot, eid, l2_slot, (unsigned long)sz, (unsigned long)l2_stride);
                 if (l2_slot >= 0 && l2_data) {
                     cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
                         l2_data + (size_t)l2_slot * l2_stride, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
