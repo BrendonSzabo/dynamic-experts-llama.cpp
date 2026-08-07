@@ -137,8 +137,6 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
         if (eid < 0 || eid >= reader->n_experts) { de->slots_buf[i] = -1; continue; }
 
         int slot = expert_slot[eid];
-        if (il == 0 && i < 4) fprintf(stderr, "[dyn-ex] L%d i%d e%d slot=%d es=%d used=%d max=%d\n",
-            il, i, eid, slot, (int)expert_slot[eid], slots_used, max_slots);
         if (slot < 0) {
             if (slots_used >= max_slots) { de->slots_buf[i] = -1; continue; }
             slot = slots_used;
