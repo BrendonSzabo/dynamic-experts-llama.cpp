@@ -110,9 +110,14 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     int n_e = (int)(src->ne[0] * src->ne[1]);
     if (n_e <= 0) return false;
 
-    if ((int)de->ids_buf.size() < n_e) de->ids_buf.resize(n_e);
-    cudaMemcpyAsync(de->ids_buf.data(), src->data, n_e * sizeof(int32_t), cudaMemcpyDeviceToHost, (cudaStream_t)de->prefetch_stream);
     cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+
+    if (de->d2h_buf_cap < (size_t)n_e) {
+        if (de->h_d2h_buf) cudaFreeHost(de->h_d2h_buf);
+        de->d2h_buf_cap = (size_t)n_e;
+        cudaHostAlloc((void **)&de->h_d2h_buf, n_e * sizeof(int32_t), cudaHostAllocDefault);
+    }
+    cudaMemcpy(de->h_d2h_buf, src->data, n_e * sizeof(int32_t), cudaMemcpyDeviceToHost);
 
     auto & layer = model->layers[il];
     auto * reader = de->reader;
@@ -133,7 +138,7 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
     if ((int)de->slots_buf.size() < n_e) de->slots_buf.resize(n_e);
 
     for (int i = 0; i < n_e; i++) {
-        int eid = (int)de->ids_buf[i];
+        int eid = (int)de->h_d2h_buf[i];
         if (eid < 0 || eid >= reader->n_experts) { de->slots_buf[i] = -1; continue; }
 
         int slot = expert_slot[eid];
@@ -149,12 +154,12 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 if (!tt || pi < 0 || !tt->data || !tt->nb[2]) return;
                 size_t sz = tt->nb[2];
                 if (l2_slot >= 0 && l2_data) {
-                    cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
-                        l2_data + (size_t)l2_slot * l2_stride, sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                    cudaMemcpy((char *)tt->data + (size_t)slot * sz,
+                        l2_data + (size_t)l2_slot * l2_stride, sz, cudaMemcpyHostToDevice);
                 } else {
                     dyn_ex_read_param(reader, pi, il, eid, de->cpu_buf.data(), sz);
-                    cudaMemcpyAsync((char *)tt->data + (size_t)slot * sz,
-                        de->cpu_buf.data(), sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                    cudaMemcpy((char *)tt->data + (size_t)slot * sz,
+                        de->cpu_buf.data(), sz, cudaMemcpyHostToDevice);
                 }
             };
             copy_one(layer.ffn_gate_exps,   de->pi_gate,    l2.gate_data,    l2.gate_size);
@@ -172,16 +177,43 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
 
     ggml_tensor * dst = t->src[1];
     if (dst && dst->data) {
-        cudaMemcpyAsync(dst->data, de->slots_buf.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+        cudaMemcpy(dst->data, de->slots_buf.data(), n_e * sizeof(int32_t), cudaMemcpyHostToDevice);
+
+        if (il == 0) {
+            std::vector<int32_t> verify_ids(n_e);
+            cudaMemcpy(verify_ids.data(), dst->data, n_e * sizeof(int32_t), cudaMemcpyDeviceToHost);
+            for (int vi = 0; vi < n_e; vi++) {
+                if (verify_ids[vi] < 0 || verify_ids[vi] >= de->n_l1) {
+                    LLAMA_LOG_ERROR("dyn-ex: L%d slot_ids[%d]=%d OOB (n_l1=%d)\n",
+                                    il, vi, verify_ids[vi], de->n_l1);
+                    break;
+                }
+            }
+        }
     }
 
-    cudaStreamSynchronize((cudaStream_t)de->prefetch_stream);
+    if (il == 0 && slots_used > 0 && layer.ffn_gate_exps && layer.ffn_gate_exps->data) {
+        int eid0 = de->h_d2h_buf[0];
+        size_t sz = std::min(layer.ffn_gate_exps->nb[2], (size_t)4096);
+        if (sz > 0) {
+            std::vector<uint8_t> gpu_buf(sz);
+            std::vector<uint8_t> ref_buf(sz);
+            cudaMemcpy(gpu_buf.data(), (char *)layer.ffn_gate_exps->data, sz, cudaMemcpyDeviceToHost);
+            dyn_ex_read_param(reader, de->pi_gate, 0, eid0, ref_buf.data(), sz);
+            uint8_t xor_sum = 0;
+            for (size_t j = 0; j < sz; j++) xor_sum |= (gpu_buf[j] ^ ref_buf[j]);
+            if (xor_sum != 0) {
+                LLAMA_LOG_ERROR("dyn-ex: L1 verify FAILED layer 0 slot 0 (expert %d, first %zu bytes, xor=%02x)\n",
+                                eid0, sz, xor_sum);
+            }
+        }
+    }
 
     // track expert usage frequency for this layer
     if (il < (int)de->freq.size()) {
         auto & f = de->freq[il];
         for (int i = 0; i < n_e; i++) {
-            int eid = de->ids_buf[i];
+            int eid = de->h_d2h_buf[i];
             if (eid >= 0 && eid < (int)f.size()) f[eid]++;
         }
     }
@@ -203,17 +235,21 @@ static bool dyn_ex_eval_callback(ggml_tensor * t, bool pre, void * user_data) {
                 int eid = ranked[k].second;
                 int ls = l2n.allocated ? l2n.expert_to_slot[eid] : DYN_EX_SENTINEL;
                 if (ls < 0) continue;
-                auto prefetch_one = [&](ggml_tensor * tt, uint8_t * l2d, size_t l2sz, size_t l2row) {
+                auto prefetch_one = [&](ggml_tensor * tt, uint8_t * l2d, size_t l2sz) {
                     if (!tt || !tt->data || !l2d || l2sz == 0) return;
                     cudaMemcpyAsync((char *)tt->data + (size_t)p_slot * tt->nb[2],
-                        l2d + (size_t)ls * l2row, l2sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
+                        l2d + (size_t)ls * l2sz, l2sz, cudaMemcpyHostToDevice, (cudaStream_t)de->prefetch_stream);
                 };
-                prefetch_one(de->l1_gate,    l2n.gate_data,    l2n.gate_size,    l2n.gate_row);
-                prefetch_one(de->l1_up,      l2n.up_data,      l2n.up_size,      l2n.up_row);
-                prefetch_one(de->l1_down[0] ? de->l1_down[0] : de->l1_down[1],
-                             l2n.down_data, l2n.down_size, l2n.down_row);
+                prefetch_one(de->l1_gate,    l2n.gate_data,    l2n.gate_size);
+                prefetch_one(de->l1_up,      l2n.up_data,      l2n.up_size);
+                {
+                    int df = l2n.down_family;
+                    ggml_tensor * down_tt = (df >= 0 && df < de->n_down_families) ? de->l1_down[df] : nullptr;
+                    if (!down_tt) down_tt = de->l1_down[0];
+                    prefetch_one(down_tt, l2n.down_data, l2n.down_size);
+                }
                 if (de->l1_gate_up)
-                    prefetch_one(de->l1_gate_up, l2n.gate_up_data, l2n.gate_up_size, l2n.gate_up_row);
+                    prefetch_one(de->l1_gate_up, l2n.gate_up_data, l2n.gate_up_size);
                 if (de->h_l1_expert_to_slot) de->h_l1_expert_to_slot[eid] = p_slot;
                 if (de->h_l1_slot_to_expert) de->h_l1_slot_to_expert[p_slot] = eid;
                 p_slot++;

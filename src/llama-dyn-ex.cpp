@@ -335,6 +335,7 @@ void dyn_ex_cache_free(dyn_ex_cache * cache) {
     if (cache->h_group_ok) cudaFreeHost(cache->h_group_ok);
     if (cache->h_group_base) cudaFreeHost(cache->h_group_base);
     if (cache->sync_event)  cudaEventDestroy((cudaEvent_t)cache->sync_event);
+    if (cache->h_d2h_buf)  cudaFreeHost(cache->h_d2h_buf);
     for (auto & l2 : cache->l2) {
         if (!l2.allocated) continue;
         if (l2.expert_to_slot) cudaFreeHost(l2.expert_to_slot);

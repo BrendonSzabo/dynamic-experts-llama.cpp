@@ -197,6 +197,11 @@ struct dyn_ex_cache {
     // stream event for host sync without full device stall
     void * sync_event = nullptr;
 
+    // pinned host buffer for async D2H copies of selected_experts
+    // std::vector (pageable) produces data corruption with cudaMemcpyAsync D2H
+    int32_t * h_d2h_buf    = nullptr;
+    size_t    d2h_buf_cap  = 0;
+
     static void release_group(int * d_stack, int * d_stack_ptr, int group_idx, void * stream);
 #endif
 };

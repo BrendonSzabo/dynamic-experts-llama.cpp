@@ -36,6 +36,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef GGML_USE_CUDA
@@ -1180,6 +1181,24 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
                 pimpl->dyn_ex->l2[il].down_family = fam;
         }
 
+        // verify L1 nb[2] matches every layer's original stride
+        for (int il = 0; il < (int)layers.size(); il++) {
+            auto & l2 = pimpl->dyn_ex->l2[il];
+            if (l2.gate_size > 0 && l2.gate_size != pimpl->dyn_ex->l1_stride_gate)
+                LLAMA_LOG_WARN("dyn-ex: L%d gate nb[2] mismatch: l1=%zu l2=%zu\n", il,
+                    pimpl->dyn_ex->l1_stride_gate, l2.gate_size);
+            if (l2.up_size > 0 && l2.up_size != pimpl->dyn_ex->l1_stride_up)
+                LLAMA_LOG_WARN("dyn-ex: L%d up nb[2] mismatch: l1=%zu l2=%zu\n", il,
+                    pimpl->dyn_ex->l1_stride_up, l2.up_size);
+            if (l2.gate_up_size > 0 && l2.gate_up_size != pimpl->dyn_ex->l1_stride_gate_up)
+                LLAMA_LOG_WARN("dyn-ex: L%d gate_up nb[2] mismatch: l1=%zu l2=%zu\n", il,
+                    pimpl->dyn_ex->l1_stride_gate_up, l2.gate_up_size);
+            if (l2.down_size > 0 && l2.down_size != pimpl->dyn_ex->l1_stride_down_arr[pimpl->dyn_ex->l2[il].down_family])
+                LLAMA_LOG_WARN("dyn-ex: L%d down nb[2] mismatch: l1=%zu l2=%zu fam=%d\n", il,
+                    pimpl->dyn_ex->l1_stride_down_arr[pimpl->dyn_ex->l2[il].down_family],
+                    l2.down_size, pimpl->dyn_ex->l2[il].down_family);
+        }
+
         int n_expert_used = (int)hparams.n_expert_used;
         pimpl->dyn_ex->n_groups = n_l1 / n_expert_used;
         pimpl->dyn_ex->groups.resize(pimpl->dyn_ex->n_groups);
@@ -1258,61 +1277,86 @@ bool llama_model::dyn_ex_init(const char * path, int n_l1, int n_l2, ggml_backen
             *de.h_misses_posted = 0;
             }
 
-            for (int il = 0; il < n_layers_val; il++) {
-                auto & l2 = de.l2[il];
-                if (l2.gate_size == 0 && l2.up_size == 0 && l2.down_size == 0 && l2.gate_up_size == 0) continue;
+            const int n_threads = std::min((int)std::thread::hardware_concurrency(), n_layers_val);
+            std::vector<std::thread> threads;
+            threads.reserve(n_threads);
 
-                int n_experts = de.reader->n_experts;
-                size_t ets_bytes = n_experts * sizeof(int);
-                {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.expert_to_slot, ets_bytes, cudaHostAllocMapped);
-                    if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_expert_to_slot, l2.expert_to_slot, 0);
-                    if (e != cudaSuccess)
-                        LLAMA_LOG_ERROR("dyn-ex: layer %d expert_to_slot failed: %s\n", il, cudaGetErrorString(e));
-                }
-                if (l2.expert_to_slot) std::fill_n((int *)l2.expert_to_slot, n_experts, DYN_EX_SENTINEL);
-                l2.slot_to_expert.assign(l2.n_l2, DYN_EX_SENTINEL);
-                l2.age.resize(l2.n_l2);
+            for (int t = 0; t < n_threads; t++) {
+                threads.emplace_back([&, t]() {
+                    for (int il = t; il < n_layers_val; il += n_threads) {
+                        auto & l2 = de.l2[il];
+                        if (l2.gate_size == 0 && l2.up_size == 0 && l2.down_size == 0 && l2.gate_up_size == 0) continue;
 
-                if (l2.gate_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * l2.n_l2, cudaHostAllocDefault);
-                    if (e != cudaSuccess)
-                        LLAMA_LOG_ERROR("dyn-ex: layer %d gate_data failed: %s\n", il, cudaGetErrorString(e));
-                }
-                if (l2.up_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.up_data, l2.up_size * l2.n_l2, cudaHostAllocDefault);
-                    if (e != cudaSuccess)
-                        LLAMA_LOG_ERROR("dyn-ex: layer %d up_data failed: %s\n", il, cudaGetErrorString(e));
-                }
-                if (l2.down_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.down_data, l2.down_size * l2.n_l2, cudaHostAllocDefault);
-                    if (e != cudaSuccess)
-                        LLAMA_LOG_ERROR("dyn-ex: layer %d down_data failed: %s\n", il, cudaGetErrorString(e));
-                }
-                if (l2.gate_up_size > 0) {
-                    cudaError_t e = cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * l2.n_l2, cudaHostAllocDefault);
-                    if (e != cudaSuccess)
-                        LLAMA_LOG_ERROR("dyn-ex: layer %d gate_up_data failed: %s\n", il, cudaGetErrorString(e));
-                }
-                l2.allocated = true;
+                        int n_experts = de.reader->n_experts;
+                        size_t ets_bytes = n_experts * sizeof(int);
+                        {
+                            cudaError_t e = cudaHostAlloc((void **)&l2.expert_to_slot, ets_bytes, cudaHostAllocMapped);
+                            if (e == cudaSuccess) e = cudaHostGetDevicePointer((void **)&l2.d_expert_to_slot, l2.expert_to_slot, 0);
+                            if (e != cudaSuccess)
+                                LLAMA_LOG_ERROR("dyn-ex: layer %d expert_to_slot failed: %s\n", il, cudaGetErrorString(e));
+                        }
+                        if (l2.expert_to_slot) std::fill_n((int *)l2.expert_to_slot, n_experts, DYN_EX_SENTINEL);
+                        l2.slot_to_expert.assign(de.n_l2, DYN_EX_SENTINEL);
+                        l2.age.resize(de.n_l2);
 
-                int n_fill = std::min(n_l2, de.reader->n_experts);
-                for (int s = 0; s < n_fill; s++) {
-                    int eid = s;
-                    l2.expert_to_slot[eid] = s;
-                    l2.slot_to_expert[s] = eid;
-                    if (de.pi_gate >= 0 && l2.gate_data && l2.gate_size > 0)
-                        dyn_ex_read_param(de.reader, de.pi_gate, il, eid,
-                            l2.gate_data + (size_t)s * l2.gate_size, l2.gate_size);
-                    if (de.pi_up >= 0 && l2.up_data && l2.up_size > 0)
-                        dyn_ex_read_param(de.reader, de.pi_up, il, eid,
-                            l2.up_data + (size_t)s * l2.up_size, l2.up_size);
-                    if (de.pi_down >= 0 && l2.down_data && l2.down_size > 0)
-                        dyn_ex_read_param(de.reader, de.pi_down, il, eid,
-                            l2.down_data + (size_t)s * l2.down_size, l2.down_size);
-                    if (de.pi_gate_up >= 0 && l2.gate_up_data && l2.gate_up_size > 0)
-                        dyn_ex_read_param(de.reader, de.pi_gate_up, il, eid,
-                            l2.gate_up_data + (size_t)s * l2.gate_up_size, l2.gate_up_size);
+                        if (l2.gate_size > 0) {
+                            cudaError_t e = cudaHostAlloc((void **)&l2.gate_data, l2.gate_size * de.n_l2, cudaHostAllocDefault);
+                            if (e != cudaSuccess)
+                                LLAMA_LOG_ERROR("dyn-ex: layer %d gate_data failed: %s\n", il, cudaGetErrorString(e));
+                        }
+                        if (l2.up_size > 0) {
+                            cudaError_t e = cudaHostAlloc((void **)&l2.up_data, l2.up_size * de.n_l2, cudaHostAllocDefault);
+                            if (e != cudaSuccess)
+                                LLAMA_LOG_ERROR("dyn-ex: layer %d up_data failed: %s\n", il, cudaGetErrorString(e));
+                        }
+                        if (l2.down_size > 0) {
+                            cudaError_t e = cudaHostAlloc((void **)&l2.down_data, l2.down_size * de.n_l2, cudaHostAllocDefault);
+                            if (e != cudaSuccess)
+                                LLAMA_LOG_ERROR("dyn-ex: layer %d down_data failed: %s\n", il, cudaGetErrorString(e));
+                        }
+                        if (l2.gate_up_size > 0) {
+                            cudaError_t e = cudaHostAlloc((void **)&l2.gate_up_data, l2.gate_up_size * de.n_l2, cudaHostAllocDefault);
+                            if (e != cudaSuccess)
+                                LLAMA_LOG_ERROR("dyn-ex: layer %d gate_up_data failed: %s\n", il, cudaGetErrorString(e));
+                        }
+                        l2.allocated = true;
+
+                        int n_fill = std::min(de.n_l2, de.reader->n_experts);
+                        for (int s = 0; s < n_fill; s++) {
+                            int eid = s;
+                            l2.expert_to_slot[eid] = s;
+                            l2.slot_to_expert[s] = eid;
+                            if (de.pi_gate >= 0 && l2.gate_data && l2.gate_size > 0)
+                                dyn_ex_read_param(de.reader, de.pi_gate, il, eid,
+                                    l2.gate_data + (size_t)s * l2.gate_size, l2.gate_size);
+                            if (de.pi_up >= 0 && l2.up_data && l2.up_size > 0)
+                                dyn_ex_read_param(de.reader, de.pi_up, il, eid,
+                                    l2.up_data + (size_t)s * l2.up_size, l2.up_size);
+                            if (de.pi_down >= 0 && l2.down_data && l2.down_size > 0)
+                                dyn_ex_read_param(de.reader, de.pi_down, il, eid,
+                                    l2.down_data + (size_t)s * l2.down_size, l2.down_size);
+                            if (de.pi_gate_up >= 0 && l2.gate_up_data && l2.gate_up_size > 0)
+                                dyn_ex_read_param(de.reader, de.pi_gate_up, il, eid,
+                                    l2.gate_up_data + (size_t)s * l2.gate_up_size, l2.gate_up_size);
+                        }
+                    }
+                });
+            }
+            for (auto & th : threads) th.join();
+
+            // XOR verify L2 data matches .bin for layer 0, first expert
+            {
+                auto & l2_0 = de.l2[0];
+                if (de.pi_gate >= 0 && l2_0.gate_data && l2_0.gate_size > 0) {
+                    size_t n = std::min(l2_0.gate_size, (size_t)4096);
+                    std::vector<uint8_t> ref(n);
+                    dyn_ex_read_param(de.reader, de.pi_gate, 0, 0, ref.data(), n);
+                    uint8_t xor_sum = 0;
+                    for (size_t j = 0; j < n; j++) xor_sum |= (ref[j] ^ l2_0.gate_data[j]);
+                    if (xor_sum != 0) {
+                        LLAMA_LOG_ERROR("dyn-ex: L2 verify FAILED for layer 0 expert 0 gate (first %zu bytes, xor=%02x)\n",
+                                        n, xor_sum);
+                    }
                 }
             }
         }
