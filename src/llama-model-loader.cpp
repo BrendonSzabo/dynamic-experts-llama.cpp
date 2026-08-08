@@ -1295,11 +1295,12 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         ovr.nb[2] = ovr.nb[1] * ovr.ne[1];
         ovr.nb[3] = ovr.nb[2] * ovr.ne[2];
 
-        // virtualized tensor on CPU — scheduler doesn't see it in GPU pool
-        ggml_backend_buffer_type_t buft = buft_for_tensor(&ovr);
-        GGML_ASSERT(buft != nullptr);
-        ggml_context * ctx = ctx_for_buft(buft);
-        ggml_tensor * ret = ggml_dup_tensor(ctx, &ovr);
+        // virtualized tensor on CPU — use CPU backend explicitly
+        ggml_tensor * ret = new ggml_tensor();
+        memcpy(ret, &ovr, sizeof(ggml_tensor));
+        ret->buffer = nullptr;
+        ret->data   = nullptr;
+        ret->flags  = GGML_TENSOR_FLAG_EXTERNAL;
         ggml_set_name(ret, tn.str().c_str());
         n_created++;
         return ret;
